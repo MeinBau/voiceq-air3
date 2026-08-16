@@ -1,10 +1,14 @@
-"""OpenRouter 무료 Qwen 모델 호출: 발언 -> Context Memory 갱신 + COP/상황판/일지 구조화 출력.
+"""OpenRouter 무료 모델 호출: 발언 -> Context Memory 갱신 + COP/상황판/일지 구조화 출력.
 
 OpenRouter는 OpenAI 호환 Chat Completions API를 제공하므로 `openai` SDK를
-base_url만 바꿔서 그대로 사용한다. 무료(:free) Qwen 모델은 provider별로
+base_url만 바꿔서 그대로 사용한다. 무료(:free) 모델은 provider별로
 strict tool-calling 지원이 들쭉날쭉하므로, tool 강제 대신 "순수 JSON만
 출력하라"는 프롬프트 지시 + 코드펜스 제거 + json.loads 재시도 방식으로
 JSON을 강제한다.
+
+Qwen 계열은 OpenRouter 무료 목록에서 빠진 상태라(2026-08 기준, 유료 전환)
+기본값을 openai/gpt-oss-20b:free로 사용한다. 무료 모델 목록은 수시로 바뀌므로
+https://openrouter.ai/models?max_price=0 에서 현재 무료 모델을 확인해 교체하세요.
 """
 
 from __future__ import annotations
@@ -19,9 +23,9 @@ import streamlit as st
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-# OpenRouter 무료 Qwen 모델 slug. 해커톤 당일 특정 모델이 무료 목록에서 빠졌다면
-# https://openrouter.ai/models?q=qwen 에서 ":free" 접미사가 붙은 다른 Qwen 모델로 교체하세요.
-DEFAULT_QWEN_MODEL = "qwen/qwen3-235b-a22b:free"
+# OpenRouter 무료 모델 slug. 해커톤 당일 이 모델이 무료 목록에서 빠졌다면
+# https://openrouter.ai/models?max_price=0 에서 ":free" 접미사가 붙은 다른 모델로 교체하세요.
+DEFAULT_QWEN_MODEL = "openai/gpt-oss-20b:free"
 
 REQUIRED_KEYS = ("context_memory", "cop_layout", "situation_board", "operation_log_entry")
 

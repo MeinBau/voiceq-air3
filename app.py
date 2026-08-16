@@ -1,6 +1,6 @@
 """VOICE-CUE (작비스) — 해커톤 프로토타입 메인 엔트리포인트.
 
-발언(텍스트) -> OpenRouter 무료 Qwen 모델 구조화 분석 -> Context Memory 갱신 -> COP/상황판/작전상황일지 자동 표출.
+발언(텍스트) -> OpenRouter 무료 모델 구조화 분석 -> Context Memory 갱신 -> COP/상황판/작전상황일지 자동 표출.
 """
 
 import csv

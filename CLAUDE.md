@@ -24,7 +24,7 @@ Streamlit 대시보드에 Video Wall처럼 시현하는 프로토타입.
 | 항목 | 원 기획서 | 프로토타입 단순화 |
 |---|---|---|
 | STT/화자분리 | 실시간 스트리밍 ASR + 화자분리 (GPU 8GB) | **OpenAI Whisper API** 또는 파일 업로드 후 배치 처리. 화자 구분은 발화 전 "화자 선택 드롭다운"으로 대체 가능 (실시간 diarization은 스트레치 목표) |
-| 판단/생성 모델 | 한국어 특화 sLLM 파인튜닝(LoRA, 4bit) | **OpenRouter 무료 Qwen 모델(`qwen/qwen3-235b-a22b:free` 등, `:free` 접미사)** 을 프롬프트 엔지니어링 + Few-shot으로 대체. 비용 없이 데모 가능. 파인튜닝은 시간상 생략, "향후 확장" 섹션에 근거만 정리 |
+| 판단/생성 모델 | 한국어 특화 sLLM 파인튜닝(LoRA, 4bit) | **OpenRouter 무료 모델(`:free` 접미사, 기본값 `openai/gpt-oss-20b:free`)** 을 프롬프트 엔지니어링 + Few-shot으로 대체. 비용 없이 데모 가능. Qwen 계열은 2026-08 기준 무료 목록에서 빠져 유료 전환됐으므로 다른 `:free` 모델 사용. 파인튜닝은 시간상 생략, "향후 확장" 섹션에 근거만 정리 |
 | CCTV PTZ 제어 | YOLO + REST API로 실제 카메라 제어 (GPU 24GB) | **프로토타입에서 제외**. 대신 "CCTV #1 → #2 전환" 같은 판단 결과를 UI 텍스트/아이콘으로만 표시 (실제 하드웨어 연동 없이 로직만 시연) |
 | 보안 격리 (Docker+Seccomp) | 코드 생성 후 격리 실행 | **프로토타입에서 제외**. Streamlit Cloud 배포 특성상 별도 코드 실행/격리 불필요. 데모에서는 "실제 운용 시 Docker+Seccomp 검증 단계 필요"로 구두 설명 |
 | 화면 조작 (pywinauto) | 실제 GUI 자동화 | **Streamlit 컴포넌트 배치 시뮬레이션**으로 대체 (LLM이 낸 레이아웃 JSON → Streamlit columns/grid로 렌더링) |
@@ -38,9 +38,12 @@ Streamlit 대시보드에 Video Wall처럼 시현하는 프로토타입.
 ## 3. 기술 스택
 
 - **UI**: Streamlit (Streamlit Community Cloud 배포)
-- **LLM**: OpenRouter 경유 무료 Qwen 모델 (기본값 `qwen/qwen3-235b-a22b:free`), `openai` Python SDK
+- **LLM**: OpenRouter 경유 무료 모델 (기본값 `openai/gpt-oss-20b:free`), `openai` Python SDK
   (OpenRouter가 OpenAI 호환 Chat Completions API를 제공하므로 `base_url`만 바꿔서 사용).
   비용 없이 데모 가능 — 무료 발급: https://openrouter.ai/keys
+  ⚠️ Qwen 계열 `:free` 모델은 2026-08 기준 전부 유료로 전환되어 사용 불가.
+  현재 무료 모델 목록은 https://openrouter.ai/models?max_price=0 에서 수시로 확인 필요
+  (변경 시 `modules/llm_engine.py`의 `DEFAULT_QWEN_MODEL`과 `secrets.toml`의 `QWEN_MODEL` 값을 교체)
 - **STT**: OpenAI Whisper API (`openai` SDK) — 또는 `faster-whisper` 로컬 처리 (Streamlit Cloud
   리소스 제한 고려 시 API 방식 권장)
 - **상태 저장**: 세션 중에는 `st.session_state`, 데모 간 영속성이 필요하면 로컬 JSON 파일
@@ -61,7 +64,7 @@ voice-cue/
 │   └── secrets.toml           # (git에 커밋 금지) API 키
 ├── modules/
 │   ├── stt.py                 # 음성 → 텍스트 + 화자 태깅
-│   ├── llm_engine.py          # OpenRouter 무료 Qwen 모델 호출: MSEL 분류/COP 생성/일지 생성/Context Memory 갱신
+│   ├── llm_engine.py          # OpenRouter 무료 모델 호출: MSEL 분류/COP 생성/일지 생성/Context Memory 갱신
 │   ├── context_memory.py      # Context Memory 읽기/쓰기/압축 로직
 │   ├── layout_renderer.py     # COP JSON → Streamlit 그리드 렌더링
 │   └── prompts.py             # 시스템 프롬프트, few-shot 예시 모음
@@ -116,7 +119,7 @@ voice-cue/
   }
 }
 ```
-→ OpenRouter 무료 Qwen 모델 호출 시, provider별로 strict tool-calling/structured output 지원이
+→ OpenRouter 무료 모델 호출 시, provider별로 strict tool-calling/structured output 지원이
 들쭉날쭉하므로 `response_format={"type": "json_object"}` 지정과 함께 시스템 프롬프트에
 "JSON 외 다른 텍스트를 출력하지 말 것"을 명시하고, 응답을 코드펜스 제거 후 `json.loads`로 파싱,
 실패 시 재시도 로직을 넣습니다. (`modules/llm_engine.py` 참고)
@@ -126,7 +129,7 @@ voice-cue/
 ## 6. 핵심 파이프라인 (구현 순서)
 
 1. **발언 입력**: 텍스트 직접 입력(데모 편의상 기본) + 오디오 업로드(Whisper 연동, 스트레치)
-2. **Context Memory 갱신 + 구조화 산출물 생성**: 위 5.3 스키마로 OpenRouter 무료 Qwen 모델 1회 호출
+2. **Context Memory 갱신 + 구조화 산출물 생성**: 위 5.3 스키마로 OpenRouter 무료 모델 1회 호출
 3. **화면 렌더링**: `cop_layout` JSON을 받아 Streamlit `st.columns`/`st.container`로 Video Wall
    그리드 시뮬레이션 (실제 CCTV 영상 없으면 플레이스홀더 이미지/색상 블록 사용)
 4. **상황판**: `situation_board`를 우선순위 정렬된 카드 UI로 표시
@@ -141,7 +144,7 @@ voice-cue/
 
 | 단계 | 내용 | 우선순위 |
 |---|---|---|
-| 1 | Streamlit 뼈대 + 텍스트 입력 → OpenRouter 무료 Qwen 모델 호출 → JSON 파싱까지 최소 동작 | 필수 |
+| 1 | Streamlit 뼈대 + 텍스트 입력 → OpenRouter 무료 모델 호출 → JSON 파싱까지 최소 동작 | 필수 |
 | 2 | COP 레이아웃 그리드 렌더링 (플레이스홀더 색상 블록) | 필수 |
 | 3 | 상황판 + 작전상황일지 UI | 필수 |
 | 4 | Context Memory 누적/표시 + 수동 보정 버튼 | 권장 |
@@ -172,7 +175,7 @@ voice-cue/
 5. 후속 발언("날씨 흐림, 시야 제한") 입력 → Context Memory에 반영되어 이후 판단에 영향
    미치는 것을 시연 (복합 판단 능력 어필)
 6. 심사위원에게 강조할 포인트: **"화면 구성 품질이 담당자 숙련도에 의존하지 않는다"**,
-   **"발언 종료 → 화면 표출까지 목표 5초 이내"** (무료 Qwen 모델 응답속도 실측치로 대체 제시.
+   **"발언 종료 → 화면 표출까지 목표 5초 이내"** (무료 모델 응답속도 실측치로 대체 제시.
    무료 모델 특성상 지연이 클 수 있어 실측 후 목표치 조정 필요),
    **"LLM API 비용 없이 데모 가능"** (OpenRouter 무료 티어)
 
