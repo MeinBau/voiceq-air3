@@ -1,0 +1,210 @@
+"""화면 소스 카탈로그 — 폐쇄 목록 관리와 후보 선별(retrieval).
+
+두 가지 역할을 한다.
+
+1) 폐쇄 목록 강제
+   LLM은 이 카탈로그에 있는 source_id만 낼 수 있다. 자유롭게 이름을 지어내면
+   실제로 존재하지 않는 화면을 띄우라는 명령이 되어 실행 단계에서 깨진다.
+   프롬프트 지시만으로는 새기 때문에 apply 단계에서 코드로도 걸러낸다.
+
+2) 후보 선별
+   카탈로그가 245건이라 전부 프롬프트에 넣으면 입력 토큰이 폭증해 응답이 느려진다.
+   발언 내용과 현재 항적 위치를 근거로 20건 내외를 골라 LLM에 넘긴다.
+   기획서의 "수천 개 자료 중 상황에 맞는 것을 선별" 단계가 바로 이것이다.
+"""
+
+from __future__ import annotations
+
+import json
+from functools import lru_cache
+from pathlib import Path
+
+from modules import base_map as bm
+
+CATALOG_PATH = Path(__file__).resolve().parent.parent / "data" / "screen_sources.json"
+
+# 상황과 무관하게 항상 후보에 포함할 기준 화면.
+ALWAYS_CANDIDATES = ["SYS-BASEMAP", "SYS-SITBOARD", "SYS-ADS"]
+
+
+@lru_cache(maxsize=1)
+def load_catalog() -> list[dict]:
+    return json.loads(CATALOG_PATH.read_text(encoding="utf-8"))["sources"]
+
+
+@lru_cache(maxsize=1)
+def by_id() -> dict[str, dict]:
+    return {s["id"]: s for s in load_catalog()}
+
+
+def exists(source_id: str) -> bool:
+    return source_id in by_id()
+
+
+def name_of(source_id: str) -> str:
+    source = by_id().get(source_id)
+    return source["name"] if source else source_id
+
+
+def cell_of(source_id: str) -> str:
+    source = by_id().get(source_id)
+    return source["cell"] if source else ""
+
+
+# ---------- 후보 선별 ----------
+
+
+# 복합 방위를 먼저 잡아야 "북서"가 "북"+"서"로 쪼개지지 않는다.
+_DIRECTIONS = ["북서", "북동", "남서", "남동", "북", "남", "동", "서"]
+
+
+def _mentioned_directions(text: str) -> list[str]:
+    found, remaining = [], text
+    for direction in _DIRECTIONS:
+        if direction in remaining:
+            found.append(direction)
+            remaining = remaining.replace(direction, "")
+    return found
+
+
+def _text_score(source: dict, text: str, mentioned_dirs: list[str]) -> float:
+    """발언·맥락 텍스트와 소스의 태그·명칭이 얼마나 겹치는지.
+
+    한국어 형태소 분석기를 쓰지 않고 부분 문자열 매칭만 한다. 태그가 "무인기",
+    "활주로" 같은 명사라 조사가 붙어도("무인기가") 그대로 걸린다.
+    """
+    if not text:
+        return 0.0
+    score = sum(3.0 for tag in source["tags"] if tag in text)
+    if source["name"] in text:
+        score += 4.0
+    for token in source["name"].split():
+        if len(token) >= 2 and token in text:
+            score += 1.0
+
+    # 발언에 방위가 나왔는데 소스가 다른 방위를 담당하면 감점.
+    # "북서방 무인기"에 동측 울타리 카메라가 올라오는 것을 막는다.
+    if mentioned_dirs:
+        source_dirs = [d for d in source["tags"] if d in _DIRECTIONS]
+        if source_dirs:
+            overlap = any(
+                set(mentioned) & set(source_dir)
+                for mentioned in mentioned_dirs
+                for source_dir in source_dirs
+            )
+            score += 3.0 if overlap else -4.0
+    return score
+
+
+def _proximity_score(source: dict, track_cells: list[str]) -> float:
+    """항적 근처의 감시자산일수록 높은 점수. 공간 근접성은 코드가 계산한다."""
+    best = 0.0
+    for cell in track_cells:
+        dist = bm.cell_distance(source["cell"], cell)
+        if dist is None:
+            continue
+        if dist <= 1.5:
+            best = max(best, 6.0)
+        elif dist <= 3.0:
+            best = max(best, 3.5)
+        elif dist <= 5.0:
+            best = max(best, 1.5)
+    return best
+
+
+def shortlist(utterance: str, context_summary: str = "", limit: int = 20) -> list[dict]:
+    """이번 상황에 쓸 만한 화면 소스 후보를 추린다."""
+    track_cells = [t["cell"] for t in _current_tracks()]
+    haystack = f"{utterance} {context_summary}"
+    # 방위는 발언 본문에서만 뽑는다. 누적 요약의 옛 방위가 현재 판단을 흐리지 않도록.
+    mentioned_dirs = _mentioned_directions(utterance)
+
+    scored = []
+    for source in load_catalog():
+        score = _text_score(source, haystack, mentioned_dirs)
+        score += _proximity_score(source, track_cells)
+        # priority_hint가 낮을수록(중요할수록) 약간 가산.
+        score += (6 - source["priority_hint"]) * 0.4
+        if score > 0:
+            scored.append((score, source))
+
+    scored.sort(key=lambda x: (-x[0], x[1]["id"]))
+    picked = [s for _, s in scored[:limit]]
+
+    picked_ids = {s["id"] for s in picked}
+    for always in ALWAYS_CANDIDATES:
+        source = by_id().get(always)
+        if source and always not in picked_ids:
+            picked.append(source)
+    return picked
+
+
+def _current_tracks() -> list[dict]:
+    """세션에 항적이 있으면 사용. Streamlit 밖(테스트)에서도 안전하게 동작."""
+    try:
+        import streamlit as st
+
+        return st.session_state.get("map_tracks", []) or []
+    except Exception:
+        return []
+
+
+def format_for_llm(candidates: list[dict]) -> str:
+    """후보 목록을 프롬프트에 넣을 압축 텍스트로. id · 명칭 · 위치 · 설명 순."""
+    lines = []
+    for source in candidates:
+        lines.append(
+            f"- {source['id']} | {source['name']} | {source['cell']} | {source['description']}"
+        )
+    return "\n".join(lines)
+
+
+# ---------- 출력 검증 ----------
+
+
+def sanitize_layout(cop_layout: list) -> tuple[list[dict], list[str]]:
+    """LLM이 낸 레이아웃에서 카탈로그에 없는 소스를 제거한다.
+
+    반환: (정제된 레이아웃, 버려진 source_id 목록)
+    버려진 목록은 UI에 노출해 모델이 무엇을 지어냈는지 팀이 볼 수 있게 한다.
+    """
+    valid_positions = {"좌측대형", "우측상단", "우측하단", "중앙"}
+    cleaned: list[dict] = []
+    dropped: list[str] = []
+
+    if not isinstance(cop_layout, list):
+        return cleaned, dropped
+
+    seen = set()
+    for item in cop_layout:
+        if not isinstance(item, dict):
+            continue
+        source_id = str(item.get("source_id", "") or item.get("source", "") or "").strip()
+        if not exists(source_id):
+            if source_id:
+                dropped.append(source_id)
+            continue
+        if source_id in seen:
+            continue
+        seen.add(source_id)
+
+        position = str(item.get("position", "") or "").strip()
+        if position not in valid_positions:
+            position = "중앙"
+        try:
+            priority = int(item.get("priority", 99))
+        except (TypeError, ValueError):
+            priority = 99
+
+        cleaned.append(
+            {
+                "source_id": source_id,
+                "name": name_of(source_id),
+                "cell": cell_of(source_id),
+                "position": position,
+                "priority": priority,
+            }
+        )
+
+    cleaned.sort(key=lambda x: x["priority"])
+    return cleaned, dropped
