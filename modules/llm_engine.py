@@ -153,10 +153,23 @@ class TurnResult:
 
 
 def configured_provider() -> str:
-    """secrets.toml의 LLM_PROVIDER 값. 세션 기본값을 여기서 가져와야
-    설정 파일을 고쳤을 때 실제로 반영된다."""
-    value = str(st.secrets.get("LLM_PROVIDER", "openrouter") or "").strip().lower()
-    return value if value in PROVIDERS else "openrouter"
+    """세션 기본 공급자를 결정한다.
+
+    LLM_PROVIDER를 secrets에 명시했으면 그걸 따른다. 명시하지 않았으면
+    실제로 키가 들어있는 공급자를 자동으로 고른다 — OPENROUTER_API_KEY만
+    있으면 openrouter, OPENAI_API_KEY만 있으면 openai. 이게 없으면
+    새로고침마다 기본값이 openrouter로 되돌아가 버려서, OpenAI 키만 넣어둔
+    사람은 매번 사이드바에서 공급자를 수동으로 바꿔야 하는 문제가 있었다.
+    """
+    value = str(st.secrets.get("LLM_PROVIDER", "") or "").strip().lower()
+    if value in PROVIDERS:
+        return value
+
+    if str(st.secrets.get("OPENROUTER_API_KEY", "") or "").strip():
+        return "openrouter"
+    if str(st.secrets.get("OPENAI_API_KEY", "") or "").strip():
+        return "openai"
+    return "openrouter"
 
 
 def _validate_api_key(api_key: str, provider: dict) -> None:
