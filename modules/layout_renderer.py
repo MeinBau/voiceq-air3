@@ -1,4 +1,4 @@
-"""COP 레이아웃 JSON -> Streamlit Video Wall 그리드 렌더링, 상황판 카드 UI."""
+"""COP 레이아웃 JSON -> Streamlit Video Wall 그리드 렌더링."""
 
 from __future__ import annotations
 
@@ -17,12 +17,6 @@ def _esc(text: object) -> str:
 # 소스 이름 -> 플레이스홀더 색상 (실제 영상 피드 없이 색상 블록으로 시현)
 _PALETTE = ["#264653", "#2A6F77", "#3D5A80", "#5C4D7D", "#7A4B6B", "#8A3033"]
 
-URGENCY_COLOR = {
-    "긴급": "#E63946",
-    "주의": "#F4A261",
-    "관찰": "#2A9D8F",
-}
-
 POSITION_ORDER = ["좌측대형", "우측상단", "우측하단", "중앙"]
 
 
@@ -40,7 +34,7 @@ def render_cop_wall(cop_layout: list[dict]) -> None:
     전장 상황도는 별도 탭이 아니라 이 안에서 실제 SVG로 인라인 표출한다.
     지휘소 대형 화면을 그대로 옮겨온 모습이어야 하기 때문이다.
     """
-    st.subheader("🖥️ COP 화면 구성 — Video Wall 2×6")
+    st.subheader("COP 화면 구성 — Video Wall 2×6")
     st.markdown(mr.alert_badge_html(), unsafe_allow_html=True)
 
     if not cop_layout:
@@ -88,7 +82,6 @@ def _panel_html(item: dict, row: int, col: int, rspan: int, cspan: int) -> str:
         body = (
             f'<div style="flex:1; display:flex; flex-direction:column; align-items:center; '
             f'justify-content:center; gap:5px; padding:8px; text-align:center;">'
-            f'<div style="font-size:1.6rem; opacity:0.35;">🎥</div>'
             f'<div style="font-size:0.7rem; opacity:0.6;">격자 {_esc(item.get("cell", ""))}</div>'
             f'<div style="font-size:0.65rem; opacity:0.4;">실제 피드 연동 시 표출</div></div>'
         )
@@ -109,31 +102,8 @@ def _panel_html(item: dict, row: int, col: int, rspan: int, cspan: int) -> str:
     )
 
 
-def render_situation_board(situation_board: list[dict]) -> None:
-    st.subheader("📋 상황판 (우선순위)")
-    if not situation_board:
-        st.info("현재 등록된 상황이 없습니다.")
-        return
-
-    for card in situation_board:
-        urgency = card.get("urgency", "관찰")
-        color = URGENCY_COLOR.get(urgency, "#2A9D8F")
-        st.markdown(
-            f"""
-            <div style="border-left: 6px solid {color}; background:#141A21; border-radius:6px;
-                        padding:10px 14px; margin-bottom:8px;">
-                <span style="background:{color}; color:#0B0F14; font-weight:700; font-size:0.75rem;
-                             padding:2px 8px; border-radius:4px;">{urgency}</span>
-                <span style="margin-left:10px; font-size:0.85rem; opacity:0.6;">#{card.get('rank', '-')}</span>
-                <div style="font-size:1.05rem; margin-top:6px;">{card.get('event', '')}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-
 def render_operation_log(operation_log: list[dict]) -> None:
-    st.subheader("📖 작전상황일지")
+    st.subheader("작전상황일지")
     if not operation_log:
         st.info("아직 기록된 사건이 없습니다.")
         return

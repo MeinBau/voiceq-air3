@@ -19,7 +19,7 @@ from modules import prompts
 from modules import sources
 from modules import llm_engine as engine
 
-st.set_page_config(page_title="VOICE-CUE (작비스)", page_icon="🎙️", layout="wide")
+st.set_page_config(page_title="VOICE-CUE (작비스)", layout="wide")
 
 
 def _is_local_access() -> bool:
@@ -44,7 +44,7 @@ def require_password() -> None:
     if _is_local_access():
         return
     if not password_set:
-        st.title("🎙️ VOICE-CUE")
+        st.title("VOICE-CUE")
         st.error(
             "외부 접속은 암호가 설정된 경우에만 허용됩니다.\n\n"
             "앱을 실행 중인 컴퓨터에서 `.streamlit/secrets.toml` 의 `APP_PASSWORD` 를 "
@@ -54,7 +54,7 @@ def require_password() -> None:
     if st.session_state.get("authed"):
         return
 
-    st.title("🎙️ VOICE-CUE")
+    st.title("VOICE-CUE")
     st.caption("작비스 팀 내부 시연용입니다. 접속 암호를 입력하세요.")
     entered = st.text_input("접속 암호", type="password")
     if entered:
@@ -134,7 +134,7 @@ def run_utterance(speaker: str, utterance: str) -> None:
 
 # ---------- 사이드바 ----------
 with st.sidebar:
-    st.title("🎙️ VOICE-CUE")
+    st.title("VOICE-CUE")
     st.caption("전투지휘소 발언 → 상황 인식 → 화면/기록 자동화 프로토타입")
 
     st.divider()
@@ -150,7 +150,7 @@ with st.sidebar:
             )
     utterance_text = st.text_area("발언 내용", height=100, placeholder="예: 무인기 2대 식별되었습니다.")
 
-    if st.button("▶ 발언 처리", type="primary", use_container_width=True):
+    if st.button("발언 처리", type="primary", use_container_width=True):
         if not speaker_choice or not utterance_text.strip():
             st.warning("화자와 발언 내용을 입력하세요.")
         else:
@@ -158,7 +158,7 @@ with st.sidebar:
                 run_utterance(speaker_choice, utterance_text.strip())
 
     st.divider()
-    st.subheader("🎬 시연 시나리오 자동 재생")
+    st.subheader("시연 시나리오 자동 재생")
     if st.button("샘플 시나리오 재생 (ORE 훈련)", use_container_width=True):
         import json
         from pathlib import Path
@@ -173,7 +173,7 @@ with st.sidebar:
         st.success("시나리오 재생 완료")
 
     st.divider()
-    st.subheader("✏️ 수동 보정")
+    st.subheader("수동 보정")
     correction_text = st.text_input("판단 보정 사항 입력", placeholder="예: CCTV-3은 항상 좌측에 배치할 것")
     if st.button("보정 사항 반영", use_container_width=True):
         if correction_text.strip():
@@ -188,7 +188,7 @@ with st.sidebar:
             st.caption(f"• {c}")
 
     st.divider()
-    st.subheader("⚙️ 모델")
+    st.subheader("모델")
 
     def _on_provider_change() -> None:
         """공급자를 바꾸면 모델도 그 공급자 것으로 갈아끼운다.
@@ -225,7 +225,7 @@ with st.sidebar:
     )
 
     st.caption(
-        "⚠️ 폐쇄망 목표를 고려하면 시연에도 **작은 모델**을 쓰는 편이 좋습니다. "
+        "폐쇄망 목표를 고려하면 시연에도 작은 모델을 쓰는 편이 좋습니다. "
         "거대 클라우드 모델로 시연해 놓고 온프레미스 12GB에서 된다고 하면 심사에서 반박당합니다."
     )
 
@@ -244,12 +244,11 @@ with st.sidebar:
 
     if st.session_state.dropped_sources:
         st.warning(
-            "카탈로그에 없어 폐기된 소스: " + ", ".join(st.session_state.dropped_sources),
-            icon="⚠️",
+            "카탈로그에 없어 폐기된 소스: " + ", ".join(st.session_state.dropped_sources)
         )
 
     st.divider()
-    if st.button("🔄 상황 초기화", use_container_width=True):
+    if st.button("상황 초기화", use_container_width=True):
         for key in (
             "context_memory_summary", "user_corrections", "utterance_log", "cop_layout",
             "situation_board", "operation_log", "latency_history",
@@ -264,8 +263,8 @@ with st.sidebar:
 # ---------- 메인 화면 ----------
 st.title("전투지휘소 상황판 — VOICE-CUE")
 
-tab_wall, tab_book, tab_board, tab_log, tab_memory = st.tabs(
-    ["COP 화면 구성", "COP 플레이북", "상황판", "작전상황일지", "Context Memory / 발언 이력"]
+tab_wall, tab_book, tab_log, tab_memory = st.tabs(
+    ["COP 화면 구성", "COP 플레이북", "작전상황일지", "Context Memory / 발언 이력"]
 )
 
 with tab_wall:
@@ -278,8 +277,7 @@ with tab_wall:
         if st.session_state.situation_unmatched:
             st.warning(
                 f"모델이 낸 유형 '{st.session_state.situation_unmatched}' 은 플레이북에 없어 "
-                "'기타 상황'으로 처리했습니다. 필요하면 플레이북 탭에서 추가하세요.",
-                icon="⚠️",
+                "'기타 상황'으로 처리했습니다. 필요하면 플레이북 탭에서 추가하세요."
             )
 
     lr.render_cop_wall(st.session_state.cop_layout)
@@ -291,7 +289,7 @@ with tab_wall:
     mr.render_map_details()
 
 with tab_book:
-    st.subheader("🗂️ COP 플레이북")
+    st.subheader("COP 플레이북")
     st.caption(
         "상황 유형별로 어떤 화면을 어느 순서로 띄울지 정의합니다. AI는 상황 유형만 분류하고, "
         "화면 배치는 이 표를 그대로 따릅니다. 표를 고치면 즉시 반영됩니다."
@@ -328,7 +326,7 @@ with tab_book:
         st.error("저장 전 확인이 필요합니다:\n\n" + "\n".join(f"- {x}" for x in problems))
 
     c1, c2 = st.columns([1, 4])
-    if c1.button("💾 저장", type="primary", disabled=bool(problems)):
+    if c1.button("저장", type="primary", disabled=bool(problems)):
         pb.save_playbook(pb.from_table(edited))
         st.success("플레이북을 저장했습니다. 다음 발언부터 적용됩니다.")
     c2.caption("저장하면 data/cop_playbook.json 에 기록됩니다.")
@@ -344,9 +342,6 @@ with tab_book:
                    f"  ← 슬롯: {it['slot']}")
     if preview_un:
         st.warning("해석 실패: " + ", ".join(preview_un))
-
-with tab_board:
-    lr.render_situation_board(st.session_state.situation_board)
 
 with tab_log:
     lr.render_operation_log(st.session_state.operation_log)
@@ -369,7 +364,7 @@ with tab_log:
                     }
                 )
         st.download_button(
-            "📥 작전상황일지 CSV 다운로드",
+            "작전상황일지 CSV 다운로드",
             data=buffer.getvalue().encode("utf-8-sig"),
             file_name="operation_log.csv",
             mime="text/csv",
@@ -398,6 +393,6 @@ with tab_memory:
 
 st.divider()
 st.caption(
-    "⚠️ 이 프로토타입의 모든 데이터는 가상 시나리오입니다. 실제 좌표/부대/작전 정보를 다루지 않습니다. "
+    "이 프로토타입의 모든 데이터는 가상 시나리오입니다. 실제 좌표/부대/작전 정보를 다루지 않습니다. "
     "CCTV PTZ 제어, 실시간 화자분리, 보안 격리 실행 등은 해커톤 시연 범위에서 제외되었으며 향후 확장 항목입니다."
 )
