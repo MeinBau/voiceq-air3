@@ -89,11 +89,10 @@ def text_score(source: dict, text: str, mentioned_dirs: list[str]) -> float:
     if mentioned_dirs:
         source_dirs = [d for d in source["tags"] if d in DIRECTIONS]
         if source_dirs:
-            overlap = any(
-                set(mentioned) & set(source_dir)
-                for mentioned in mentioned_dirs
-                for source_dir in source_dirs
-            )
+            # 문자열을 set()에 넣으면 글자 단위로 쪼개진다("북서" -> {"북","서"}).
+            # 그 결과 "북"만 언급했는데 "북서" 태그와도 겹친다고 오판했다 — 정확히
+            # 같은 방위 단어일 때만 겹친 것으로 본다.
+            overlap = bool(set(mentioned_dirs) & set(source_dirs))
             score += 3.0 if overlap else -4.0
     return score
 

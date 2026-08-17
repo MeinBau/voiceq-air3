@@ -145,24 +145,49 @@ def describe_for_llm() -> str:
 # ---------- 슬롯 해석 ----------
 
 
-def _best_match(candidates: list[dict], utterance: str) -> dict | None:
-    """발언 텍스트와 가장 관련 있는 소스를 고른다. 관련 단서가 없으면 목록의 첫 항목."""
-    if not candidates:
+def _best_match(
+    candidates: list[dict], utterance: str, used: set[str] | None = None
+) -> dict | None:
+    """발언 텍스트와 가장 관련 있는 소스를 고른다. 관련 단서가 없으면 남은 후보 중 첫 항목.
+
+    이미 다른 슬롯이 쓴 소스는 후보에서 뺀다. "해당 지역 cctv"와 "낙탄 지역 cctv"처럼
+    서로 다른 슬롯이 같은 후보 풀(전체 CCTV)을 같은 발언으로 검색하면 항상 똑같은
+    1위가 나온다. used를 빼지 않으면 두 번째 슬롯이 첫 번째와 동일한 소스를 고른
+    뒤 build_layout의 중복 제거에 걸려 조용히 사라진다.
+
+    다만 정말로 두 슬롯이 같은 카메라를 가리키는 상황(예: 낙탄 지점이 곧 발언
+    현장인 경우)도 있다. 그럴 땐 used를 뺀 나머지 후보 중 발언과 관련된 게
+    하나도 없다 — 이때는 억지로 엉뚱한 카메라를 채우지 말고 None을 돌려줘서
+    이 슬롯은 그냥 비워두고 상시 표출 화면이 대신 채우게 한다.
+    """
+    used = used or set()
+    pool = [c for c in candidates if c["id"] not in used]
+    excluded_something = len(pool) < len(candidates)
+    if not pool:
         return None
     if not utterance:
-        return candidates[0]
+        return pool[0]
     mentioned_dirs = sources.mentioned_directions(utterance)
     scored = [
         (sources.text_score(source, utterance, mentioned_dirs), source["id"], source)
-        for source in candidates
+        for source in pool
     ]
     scored.sort(key=lambda x: (-x[0], x[1]))
     best_score, _, best_source = scored[0]
-    return best_source if best_score > 0 else candidates[0]
+    if best_score > 0:
+        return best_source
+    if excluded_something:
+        return None  # 관련 있는 다음 카메라가 없다 = 진짜 같은 카메라를 가리키는 것.
+    return pool[0]  # 처음 고르는 슬롯이면 단서가 없어도 뭔가는 보여준다.
 
 
-def resolve_slot(slot_name: str, utterance: str) -> dict | None:
-    """슬롯 이름 하나를 실제 화면 소스로 바꾼다. 못 찾으면 None."""
+def resolve_slot(slot_name: str, utterance: str, used: set[str] | None = None) -> dict | None:
+    """슬롯 이름 하나를 실제 화면 소스로 바꾼다. 못 찾으면 None.
+
+    used는 이미 다른 슬롯이 골라 쓴 source_id 목록이다. 방향/키워드로 후보를
+    직접 검색하는 슬롯(prefix/group/nearest_cctv)에만 적용한다 — fixed 슬롯은
+    대체할 다른 후보가 없으므로 그대로 둔다.
+    """
     spec = load_playbook()["slots"].get(slot_name)
     catalog = sources.load_catalog()
 
@@ -182,18 +207,18 @@ def resolve_slot(slot_name: str, utterance: str) -> dict | None:
 
     if kind == "prefix":
         prefix = spec.get("prefix", "")
-        return _best_match([s for s in catalog if s["id"].startswith(prefix)], utterance)
+        return _best_match([s for s in catalog if s["id"].startswith(prefix)], utterance, used)
 
     if kind == "group":
         pool = [
             s for s in catalog
             if any(s["id"].startswith(p) for p in spec.get("prefixes", []))
         ]
-        return _best_match(pool, utterance)
+        return _best_match(pool, utterance, used)
 
     if kind == "nearest_cctv":
         pool = [s for s in catalog if s["feed_type"] in ("CCTV", "열상", "바디캠", "이동형")]
-        return _best_match(pool, utterance)
+        return _best_match(pool, utterance, used)
 
     return None
 
@@ -228,17 +253,17 @@ def build_layout(situation_name: str, utterance: str = "") -> tuple[list[dict], 
     # 어떤 CCTV가 지금 화면에 떠 있는지 한눈에 보여주는 기준 화면이기 때문이다.
     pinned_slot = load_playbook().get("pinned_slot", "")
     if pinned_slot:
-        pinned_source = resolve_slot(pinned_slot, utterance)
+        pinned_source = resolve_slot(pinned_slot, utterance, used)
         if pinned_source is not None:
             _append(pinned_source, pinned_slot, "고정")
 
     for slot_name in situation.get("screens", []):
-        source = resolve_slot(slot_name, utterance)
+        source = resolve_slot(slot_name, utterance, used)
         if source is None:
             unresolved.append(slot_name)
             continue
         if source["id"] in used:
-            continue  # 같은 화면을 두 자리에 띄우지 않는다.
+            continue  # fixed 슬롯이 이미 쓰인 소스를 가리키는 경우만 여기 걸린다.
         if len(layout) >= MAX_PANELS:
             break
         _append(source, slot_name, "상황")
@@ -249,7 +274,7 @@ def build_layout(situation_name: str, utterance: str = "") -> tuple[list[dict], 
     for slot_name in load_playbook().get("always_on", []):
         if len(layout) >= MAX_PANELS:
             break
-        source = resolve_slot(slot_name, utterance)
+        source = resolve_slot(slot_name, utterance, used)
         if source and source["id"] not in used:
             _append(source, slot_name, "상시")
 
