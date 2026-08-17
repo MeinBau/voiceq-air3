@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
@@ -184,10 +185,16 @@ def _validate_api_key(api_key: str, provider: dict) -> None:
         raise RuntimeError(f"{where} 에 공백이나 줄바꿈이 섞여 있습니다. 제거하고 저장하세요.")
 
 
-def get_runtime() -> tuple[openai.OpenAI, str, dict | None]:
+def get_runtime() -> tuple[Callable[[], openai.OpenAI], str, dict | None]:
     """메인 스레드에서만 호출할 것 — st.secrets / st.session_state를 읽는다.
 
-    반환: (클라이언트, 모델 ID, 공급자별 추가 파라미터)
+    클라이언트를 미리 만들어 반환하지 않고 '클라이언트를 새로 만드는 함수'를 반환한다.
+    FAST/FULL 두 경로가 스레드로 동시에 호출되는데, httpx 커넥션 풀을 공유하는 클라이언트
+    하나를 두 스레드가 동시에 쓰면 드물게 한쪽 요청에 Authorization 헤더가 누락되는
+    레이스 컨디션이 발생한다(OpenRouter가 401 "Missing Authentication header"로 응답).
+    스레드마다 별도 클라이언트를 만들면 이 공유 상태 자체가 사라진다.
+
+    반환: (클라이언트 팩토리, 모델 ID, 공급자별 추가 파라미터)
     """
     provider_id = st.session_state.get("provider") or configured_provider()
     provider = PROVIDERS.get(provider_id, PROVIDERS["openrouter"])
@@ -200,15 +207,17 @@ def get_runtime() -> tuple[openai.OpenAI, str, dict | None]:
         provider_id == "local"
     ) else provider["base_url"]
 
-    client = openai.OpenAI(
-        base_url=base_url,
-        api_key=api_key or "not-needed",  # 로컬 서버는 키를 요구하지 않는다.
-        timeout=40.0,
-    )
+    def make_client() -> openai.OpenAI:
+        return openai.OpenAI(
+            base_url=base_url,
+            api_key=api_key or "not-needed",  # 로컬 서버는 키를 요구하지 않는다.
+            timeout=40.0,
+        )
+
     model = st.session_state.get("selected_model") or st.secrets.get(
         "QWEN_MODEL", DEFAULT_MODEL
     )
-    return client, model, provider_extra_body(provider_id)
+    return make_client, model, provider_extra_body(provider_id)
 
 
 def list_models(provider_id: str) -> list[str]:
@@ -248,7 +257,7 @@ def _extract_json(raw_text: str, required_keys: tuple[str, ...]) -> dict:
 
 
 def call_llm(
-    client: openai.OpenAI,
+    client_factory: Callable[[], openai.OpenAI],
     model: str,
     system_prompt: str,
     few_shot_messages: list[dict],
@@ -258,7 +267,12 @@ def call_llm(
     extra_body: dict | None = None,
     max_retries: int = 1,
 ) -> LLMResult:
-    """구조화된 JSON 1건을 받아온다. 워커 스레드에서 실행되므로 st.* 접근 금지."""
+    """구조화된 JSON 1건을 받아온다. 워커 스레드에서 실행되므로 st.* 접근 금지.
+
+    시도(재시도 포함)마다 클라이언트를 새로 만든다. 다른 스레드와 커넥션을
+    공유하지 않기 위함이며, 이전 시도의 커넥션 상태를 다음 재시도로 들고
+    가지 않기 위함이기도 하다.
+    """
     messages = [
         {"role": "system", "content": system_prompt},
         *few_shot_messages,
@@ -267,6 +281,7 @@ def call_llm(
 
     last_error: Exception | None = None
     for _ in range(max_retries + 1):
+        client = client_factory()
         start = time.monotonic()
         try:
             response = client.chat.completions.create(
@@ -322,11 +337,16 @@ def call_llm(
             output_tokens=getattr(usage, "completion_tokens", 0) or 0,
         )
 
+    if isinstance(last_error, openai.AuthenticationError):
+        raise RuntimeError(
+            f"인증 실패(401)로 {max_retries + 1}회 모두 실패했습니다. API 키 자체가 "
+            f"잘못됐거나(secrets.toml 확인) 만료됐을 가능성이 큽니다. (원문: {str(last_error)[:150]})"
+        ) from last_error
     raise RuntimeError(str(last_error))
 
 
 def analyze_turn(
-    client: openai.OpenAI,
+    client_factory: Callable[[], openai.OpenAI],
     model: str,
     fast_system: str,
     fast_few_shot: list[dict],
@@ -336,16 +356,17 @@ def analyze_turn(
     full_turn: str,
     extra_body: dict | None = None,
 ) -> TurnResult:
-    """표출 경로와 기록 경로를 동시에 던진다."""
+    """표출 경로와 기록 경로를 동시에 던진다. 두 경로가 클라이언트를 공유하지 않도록
+    각자 client_factory를 통해 자기 커넥션을 새로 만든다."""
     result = TurnResult()
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         fast_future = pool.submit(
-            call_llm, client, model, fast_system, fast_few_shot, fast_turn,
+            call_llm, client_factory, model, fast_system, fast_few_shot, fast_turn,
             FAST_KEYS, 600, extra_body,
         )
         full_future = pool.submit(
-            call_llm, client, model, full_system, full_few_shot, full_turn,
+            call_llm, client_factory, model, full_system, full_few_shot, full_turn,
             FULL_KEYS, 800, extra_body,
         )
 

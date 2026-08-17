@@ -75,7 +75,7 @@ SPEAKERS = org.speaker_titles() + ["직접입력"]
 
 def run_utterance(speaker: str, utterance: str) -> None:
     try:
-        client, model, extra_body = engine.get_runtime()
+        client_factory, model, extra_body = engine.get_runtime()
     except RuntimeError as e:
         st.error(f"LLM 호출 실패: {e}")
         return
@@ -105,7 +105,7 @@ def run_utterance(speaker: str, utterance: str) -> None:
     )
 
     result = engine.analyze_turn(
-        client=client,
+        client_factory=client_factory,
         model=model,
         fast_system=prompts.FAST_SYSTEM_PROMPT,
         fast_few_shot=prompts.FAST_FEW_SHOT_MESSAGES,
