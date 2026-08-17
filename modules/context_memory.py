@@ -45,8 +45,10 @@ def init_session_state() -> None:
 def apply_fast_result(result_data: dict) -> None:
     """표출 경로 결과 — 상황 유형을 받아 플레이북으로 화면을 구성한다.
 
-    LLM은 상황 유형과 발생 격자만 정한다. 어떤 화면을 어느 순서로 띄울지는
-    운용자가 만든 플레이북이 결정하므로, 모델이 화면 이름을 지어낼 여지가 없다.
+    LLM은 상황 유형과 "관련 CCTV를 고르기 위한 대략적 방향(focus_cell)"만 정한다.
+    focus_cell은 사건의 정확한 물리적 위치가 아니라 방향 참고값이다. 어떤 화면을
+    어느 순서로 띄울지는 운용자가 만든 플레이북이 결정하므로, 모델이 화면 이름을
+    지어낼 여지가 없다.
     """
     bm.apply_map_updates(result_data.get("map_updates") or {})
 
@@ -54,7 +56,7 @@ def apply_fast_result(result_data: dict) -> None:
     raw_type = str(situation.get("type", "") or "").strip()
     focus_cell = str(situation.get("focus_cell", "") or "").strip().upper()
     if bm.cell_to_index(focus_cell) is None:
-        focus_cell = "E4"  # 위치를 못 정하면 기지 중앙 기준으로 해석한다.
+        focus_cell = "E4"  # 방향을 못 정하면 중앙 CCTV 클러스터를 기본값으로 쓴다.
 
     matched = pb.find_situation(raw_type)
     resolved_name = matched["name"] if matched else "기타 상황"

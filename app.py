@@ -271,7 +271,12 @@ with tab_wall:
     if st.session_state.situation_type:
         cols = st.columns([2, 1, 3])
         cols[0].metric("판정된 상황 유형", st.session_state.situation_type)
-        cols[1].metric("상황 격자", st.session_state.situation_focus)
+        cols[1].metric(
+            "상황 격자",
+            st.session_state.situation_focus,
+            help="사건의 정확한 발생 위치가 아니라, 어느 방향의 CCTV를 띄울지 고르기 "
+            "위한 대략적인 참고 좌표입니다.",
+        )
         if st.session_state.situation_reason:
             cols[2].caption(f"판단 근거: {st.session_state.situation_reason}")
         if st.session_state.situation_unmatched:
@@ -303,9 +308,9 @@ with tab_book:
             if kind == "fixed":
                 desc = sources.name_of(spec.get("source_id", ""))
             elif kind == "nearest_cctv":
-                desc = "상황 격자에서 가장 가까운 CCTV를 자동 선택"
+                desc = "상황 격자(대략적 방향)에서 가장 가까운 CCTV를 자동 선택"
             elif kind == "prefix":
-                desc = f"{spec.get('prefix')}* 중 가장 가까운 것"
+                desc = f"{spec.get('prefix')}* 중 상황 격자(대략적 방향)에서 가장 가까운 것"
             else:
                 desc = "지정 그룹 중 가장 가까운 것"
             st.caption(f"• **{name}** — {desc}")
@@ -335,7 +340,11 @@ with tab_book:
     st.markdown("**미리보기** — 상황 유형을 고르면 실제 배치 결과를 확인할 수 있습니다.")
     pc1, pc2 = st.columns(2)
     preview_situation = pc1.selectbox("상황 유형", pb.situation_names())
-    preview_cell = pc2.text_input("상황 격자", value="E4")
+    preview_cell = pc2.text_input(
+        "상황 격자",
+        value="E4",
+        help="사건의 정확한 위치가 아니라 CCTV 선택용 대략적 방향 좌표입니다.",
+    )
     preview_layout, preview_un = pb.build_layout(preview_situation, preview_cell.strip().upper())
     for it in preview_layout:
         st.caption(f"{it['priority']}. **{it['position']}** — {it['name']} `{it['source_id']}`"
