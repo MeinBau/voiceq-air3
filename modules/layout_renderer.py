@@ -25,17 +25,17 @@ def _color_for(name: str) -> str:
     return _PALETTE[idx]
 
 
-MAP_SOURCES = ("SYS-BASEMAP", "SYS-BASEMAP-WIND")
+MAP_SOURCES = ("SYS-BASEMAP",)
 
 
 def render_cop_wall(cop_layout: list[dict]) -> None:
     """2행 6열 Video Wall. 1순위는 좌측 2×2 대형 화면을 차지한다.
 
-    전장 상황도는 별도 탭이 아니라 이 안에서 실제 SVG로 인라인 표출한다.
-    지휘소 대형 화면을 그대로 옮겨온 모습이어야 하기 때문이다.
+    전장 상황도는 별도 탭이 아니라 이 안에서 실제 SVG로 인라인 표출하며, 상황과
+    무관하게 항상 1순위 자리에 고정된다. 지도 위에는 지금 화면에 떠 있는 CCTV의
+    위치만 표시한다 — 지휘소 대형 화면을 그대로 옮겨온 모습이어야 하기 때문이다.
     """
     st.subheader("COP 화면 구성 — Video Wall 2×6")
-    st.markdown(mr.alert_badge_html(), unsafe_allow_html=True)
 
     if not cop_layout:
         st.info("아직 화면 구성이 결정되지 않았습니다. 발언을 입력하면 자동으로 배치됩니다.")
@@ -44,7 +44,7 @@ def render_cop_wall(cop_layout: list[dict]) -> None:
     panels = []
     for item in cop_layout[: pb.MAX_PANELS]:
         row, col, rspan, cspan = item.get("grid", (1, 1, 1, 1))
-        panels.append(_panel_html(item, row, col, rspan, cspan))
+        panels.append(_panel_html(item, row, col, rspan, cspan, cop_layout))
 
     st.markdown(
         f'<div style="display:grid; grid-template-columns:repeat({pb.GRID_COLS}, 1fr); '
@@ -55,7 +55,9 @@ def render_cop_wall(cop_layout: list[dict]) -> None:
     )
 
 
-def _panel_html(item: dict, row: int, col: int, rspan: int, cspan: int) -> str:
+def _panel_html(
+    item: dict, row: int, col: int, rspan: int, cspan: int, cop_layout: list[dict]
+) -> str:
     source_id = item.get("source_id", "")
     name = item.get("name", source_id)
     priority = item.get("priority", "-")
@@ -72,9 +74,10 @@ def _panel_html(item: dict, row: int, col: int, rspan: int, cspan: int) -> str:
     )
 
     if is_map:
+        active = [x for x in cop_layout if x.get("source_id") not in MAP_SOURCES]
         body = (
             f'<div style="flex:1; padding:6px; overflow:hidden;">'
-            f"{mr.build_map_svg(compact=(cspan < 2))}</div>"
+            f"{mr.build_map_svg(active, compact=(cspan < 2))}</div>"
         )
         bg = "#0B0F14"
     else:

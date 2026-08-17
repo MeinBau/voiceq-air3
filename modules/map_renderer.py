@@ -1,11 +1,10 @@
-"""전장 상황도 SVG 렌더링 — 위성사진 느낌의 기지 조감도.
+"""가상비행단 배치도 SVG 렌더링 — 위성사진 느낌의 기지 조감도.
 
-base_map.serialize_for_llm() 과 "같은 상태"를 그린다. 한쪽만 고치면
-사람과 AI가 다른 그림을 보게 되므로 항상 함께 수정할 것.
-
-격자는 두 층으로 그린다.
-    주격자 A~J / 1~7  — 자산·항적의 기준 좌표. LLM이 쓰는 것도 이것이다.
-    보조격자 (주격자를 4등분) — 눈으로 위치를 가늠하기 위한 것. 데이터에는 쓰지 않는다.
+이 지도는 상황에 따라 바뀌지 않는 "고정 배치도"다. 지도 위에 얹는 유일한
+동적 정보는 "지금 COP 화면(비디오월)에 떠 있는 CCTV가 어디를 보고 있는가"
+뿐이다. 항적·경보수준·자산 가동상태처럼 LLM의 추정이 필요한 정보는 더 이상
+지도에 올리지 않는다 — 정확한 위치를 모르는 것을 지도에 억지로 찍으면
+"그 지점에 실재한다"는 그림이 되어 보는 사람을 오도하기 때문이다.
 """
 
 from __future__ import annotations
@@ -13,25 +12,19 @@ from __future__ import annotations
 import hashlib
 import html
 
-import streamlit as st
-
 from modules import base_map as bm
+from modules import sources
 
 CELL = 78
 MARGIN_LEFT = 30
 MARGIN_TOP = 26
 SUBDIV = 4  # 주격자 한 칸을 몇 등분해 보조격자를 그릴지
 
-STATUS_COLOR = {
-    "정상근무": "#3FBF8F", "이상없음보고": "#3FBF8F", "대기": "#3FBF8F",
-    "경계강화": "#F4A261", "전개": "#F4A261", "재배치중": "#F4A261",
-    "사격대기": "#E9C46A", "교전": "#E63946",
-}
-THREAT_COLOR = {"긴급": "#FF4D5A", "주의": "#F4A261", "관찰": "#4FC3A1"}
-ALERT_COLOR = {
-    "평시": "#3FBF8F", "관심": "#8AB17D", "주의": "#E9C46A",
-    "경계": "#F4A261", "심각": "#E63946",
-}
+# 활성 CCTV로 표시할 feed_type. "시스템"(상황판·레이더 화면 등)은 실제로
+# 특정 지점을 비추는 카메라가 아니므로 지도에 찍지 않는다.
+CAMERA_FEED_TYPES = {"CCTV", "열상", "바디캠", "이동형", "조준경"}
+
+ACTIVE_MARKER = "#4FD1C5"
 
 # 위성사진 느낌을 내기 위한 팔레트 (지표 · 포장 · 건물 지붕)
 TERRAIN = "#2B3A2E"
@@ -75,12 +68,29 @@ def _jitter(seed: str, span: int) -> int:
     return int(hashlib.md5(seed.encode()).hexdigest(), 16) % span
 
 
-def build_map_svg(compact: bool = False) -> str:
+def _active_camera_markers(active_sources: list[dict] | None) -> list[tuple[float, float, str]]:
+    """cop_layout 항목 중 실제 카메라 피드만 골라 (x, y, 라벨)로 변환한다."""
+    if not active_sources:
+        return []
+    catalog = sources.by_id()
+    markers = []
+    for item in active_sources:
+        source_id = item.get("source_id", "")
+        catalog_entry = catalog.get(source_id)
+        feed_type = catalog_entry["feed_type"] if catalog_entry else ""
+        if feed_type not in CAMERA_FEED_TYPES:
+            continue
+        pos = _center(item.get("cell", ""))
+        if not pos:
+            continue
+        markers.append((pos[0], pos[1], str(item.get("priority", ""))))
+    return markers
+
+
+def build_map_svg(active_sources: list[dict] | None = None, compact: bool = False) -> str:
     base = bm.load_base_map()
     grid = base["base"]["grid"]
     cols, rows = grid["cols"], grid["rows"]
-    status = st.session_state.map_asset_status
-    cells = st.session_state.map_asset_cell
 
     W = MARGIN_LEFT + len(cols) * CELL + 12
     H = MARGIN_TOP + rows * CELL + 12
@@ -267,120 +277,19 @@ def build_map_svg(compact: bool = False) -> str:
         f'opacity="0.75"/>'
     )
 
-    # --- 대공 자산 사거리 ---
-    for asset in base["air_defense"]:
-        now = status.get(asset["id"], "대기")
-        if now == "대기":
-            continue
-        pos = _center(cells.get(asset["id"], asset["cell"]))
-        if not pos:
-            continue
-        color = STATUS_COLOR.get(now, "#F4A261")
+    # --- 지금 COP 화면에 떠 있는 CCTV 위치 — 이 지도가 하는 유일한 동적 표시 ---
+    for x, y, label in _active_camera_markers(active_sources):
         p.append(
-            f'<circle cx="{pos[0]}" cy="{pos[1]}" r="{asset["range_cells"] * CELL}" '
-            f'fill="{color}" fill-opacity="0.05" stroke="{color}" stroke-opacity="0.4" '
-            f'stroke-width="1" stroke-dasharray="6 6"/>'
+            f'<circle cx="{x}" cy="{y}" r="12" fill="{ACTIVE_MARKER}" fill-opacity="0.18" '
+            f'stroke="{ACTIVE_MARKER}" stroke-width="1.4"/>'
         )
-
-    # --- 초소 ---
-    for post in base["sentry_posts"]:
-        pos = _center(cells.get(post["id"], post["cell"]))
-        if not pos:
-            continue
-        color = STATUS_COLOR.get(status.get(post["id"], "정상근무"), "#3FBF8F")
-        x, y = pos
-        p.append(f'<circle cx="{x}" cy="{y}" r="8.5" fill="{color}" stroke="#0D1210" '
-                 f'stroke-width="2"/>')
-        p.append(f'<circle cx="{x}" cy="{y}" r="3" fill="#0D1210" opacity="0.55"/>')
-        if not compact:
+        p.append(f'<circle cx="{x}" cy="{y}" r="6.5" fill="{ACTIVE_MARKER}" stroke="#0D1210" '
+                 f'stroke-width="1.5"/>')
+        if label:
             p.append(
-                f'<text x="{x}" y="{y + 21}" fill="#A9BCB0" font-size="8.5" '
-                f'text-anchor="middle" font-family="monospace" '
-                f'style="paint-order:stroke; stroke:#0D1210; stroke-width:2.5px;">'
-                f'{_esc(post["id"])}</text>'
+                f'<text x="{x}" y="{y + 3.5}" fill="#0D1210" font-size="8" font-weight="800" '
+                f'text-anchor="middle" font-family="sans-serif">{_esc(label)}</text>'
             )
-
-    # --- 대공 자산 ---
-    for asset in base["air_defense"]:
-        pos = _center(cells.get(asset["id"], asset["cell"]))
-        if not pos:
-            continue
-        color = STATUS_COLOR.get(status.get(asset["id"], "대기"), "#3FBF8F")
-        x, y = pos
-        if asset["kind"] == "대공포":
-            p.append(f'<rect x="{x - 8}" y="{y - 8}" width="16" height="16" fill="{color}" '
-                     f'stroke="#0D1210" stroke-width="2" rx="2"/>')
-            p.append(f'<line x1="{x}" y1="{y}" x2="{x + 13}" y2="{y - 9}" '
-                     f'stroke="{color}" stroke-width="2.5"/>')
-        else:
-            p.append(f'<polygon points="{x},{y - 10} {x + 10},{y} {x},{y + 10} '
-                     f'{x - 10},{y}" fill="{color}" stroke="#0D1210" stroke-width="2"/>')
-        if not compact:
-            p.append(
-                f'<text x="{x}" y="{y + 22}" fill="#A9BCB0" font-size="8.5" '
-                f'text-anchor="middle" font-family="monospace" '
-                f'style="paint-order:stroke; stroke:#0D1210; stroke-width:2.5px;">'
-                f'{_esc(asset["id"])}</text>'
-            )
-
-    # --- 항적 ---
-    for track in st.session_state.map_tracks:
-        pos = _center(track["cell"])
-        if not pos:
-            continue
-        color = THREAT_COLOR.get(track["threat"], "#F4A261")
-        x, y = pos
-        p.append(f'<circle cx="{x}" cy="{y}" r="19" fill="{color}" fill-opacity="0.12" '
-                 f'stroke="{color}" stroke-width="1.5" stroke-opacity="0.8"/>')
-        p.append(f'<circle cx="{x}" cy="{y}" r="26" fill="none" stroke="{color}" '
-                 f'stroke-width="0.8" stroke-opacity="0.35"/>')
-        p.append(f'<polygon points="{x},{y - 11} {x + 9},{y + 7} {x},{y + 3} '
-                 f'{x - 9},{y + 7}" fill="{color}" stroke="#0D1210" stroke-width="1.2"/>')
-        p.append(
-            f'<text x="{x}" y="{y - 24}" fill="{color}" font-size="10.5" font-weight="700" '
-            f'text-anchor="middle" font-family="sans-serif" '
-            f'style="paint-order:stroke; stroke:#0D1210; stroke-width:3px;">'
-            f'{_esc(track["label"])}</text>'
-        )
 
     p.append("</svg>")
     return "".join(p)
-
-
-def alert_badge_html() -> str:
-    alert = st.session_state.map_alert_level
-    color = ALERT_COLOR.get(alert, "#3FBF8F")
-    base = bm.load_base_map()
-    return (
-        f'<div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">'
-        f'<span style="background:{color}; color:#0B0F14; font-weight:800; '
-        f'padding:3px 12px; border-radius:4px; font-size:0.85rem;">경보 {_esc(alert)}</span>'
-        f'<span style="opacity:0.55; font-size:0.8rem;">{_esc(base["base"]["name"])} · '
-        f'격자 1칸 {base["base"]["grid"]["cell_meters"]}m</span></div>'
-    )
-
-
-def render_map_details() -> None:
-    """COP 화면 아래에 붙는 상세 정보 — 교전 판정과 자산 현황."""
-    reports = bm.engagement_report()
-    if reports:
-        st.markdown("**교전 가능 판정** — 사거리 기반 자동 계산")
-        for line in reports:
-            st.caption(f"• {line}")
-
-    with st.expander("자산 현황 상세"):
-        base = bm.load_base_map()
-        status = st.session_state.map_asset_status
-        cells = st.session_state.map_asset_cell
-        rows = [
-            {"구분": "초소", "ID": x["id"], "명칭": x["name"],
-             "위치": cells.get(x["id"], x["cell"]),
-             "상태": status.get(x["id"], x["default_status"])}
-            for x in base["sentry_posts"]
-        ] + [
-            {"구분": x["kind"], "ID": x["id"], "명칭": x["name"],
-             "위치": cells.get(x["id"], x["cell"]),
-             "상태": status.get(x["id"], x["default_status"])}
-            for x in base["air_defense"]
-        ]
-        st.dataframe(rows, use_container_width=True, hide_index=True)

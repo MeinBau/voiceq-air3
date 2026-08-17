@@ -221,6 +221,14 @@ def build_layout(situation_name: str, focus_cell: str = "") -> tuple[list[dict],
             }
         )
 
+    # 비행단 전장상황도는 상황 유형과 무관하게 항상 1순위(가장 큰 자리)로 고정 배치한다.
+    # 어떤 CCTV가 지금 화면에 떠 있는지 한눈에 보여주는 기준 화면이기 때문이다.
+    pinned_slot = load_playbook().get("pinned_slot", "")
+    if pinned_slot:
+        pinned_source = resolve_slot(pinned_slot, focus_cell)
+        if pinned_source is not None:
+            _append(pinned_source, pinned_slot, "고정")
+
     for slot_name in situation.get("screens", []):
         source = resolve_slot(slot_name, focus_cell)
         if source is None:

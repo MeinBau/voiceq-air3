@@ -12,7 +12,6 @@ import streamlit as st
 from modules import base_map as bm
 from modules import context_memory as cm
 from modules import layout_renderer as lr
-from modules import map_renderer as mr
 from modules import organization as org
 from modules import playbook as pb
 from modules import prompts
@@ -81,15 +80,13 @@ def run_utterance(speaker: str, utterance: str) -> None:
         return
 
     summary = st.session_state.context_memory_summary
-    map_state = bm.serialize_for_llm()
-
 
     fast_turn = prompts.build_fast_turn(
         context_memory_summary=summary,
         user_corrections=st.session_state.user_corrections,
         speaker_desc=org.describe_speaker(speaker),
         utterance=utterance,
-        map_state_text=map_state,
+        map_state_text=bm.static_context_for_llm(),
         situation_list_text=pb.describe_for_llm(),
     )
     full_turn = prompts.build_full_turn(
@@ -98,10 +95,6 @@ def run_utterance(speaker: str, utterance: str) -> None:
         speaker_desc=org.describe_speaker(speaker),
         utterance=utterance,
         operation_log=st.session_state.operation_log,
-        map_summary=(
-            f"경보수준 {st.session_state.map_alert_level}, "
-            f"항적 {len(st.session_state.map_tracks)}건"
-        ),
     )
 
     result = engine.analyze_turn(
@@ -255,7 +248,6 @@ with st.sidebar:
             "display_latency_history", "dropped_sources",
         ):
             st.session_state.pop(key, None)
-        bm.reset_map_state()
         cm.init_session_state()
         st.rerun()
 
@@ -286,12 +278,13 @@ with tab_wall:
             )
 
     lr.render_cop_wall(st.session_state.cop_layout)
+    st.caption(
+        "1번 '비행단 전장상황도'는 항상 고정 표시됩니다. 지도 위 점은 지금 화면에 떠 있는 "
+        "CCTV의 위치이며, 숫자는 해당 화면의 순번과 같습니다."
+    )
 
     if st.session_state.dropped_sources:
         st.warning("해석하지 못한 플레이북 슬롯: " + ", ".join(st.session_state.dropped_sources))
-
-    st.divider()
-    mr.render_map_details()
 
 with tab_book:
     st.subheader("COP 플레이북")

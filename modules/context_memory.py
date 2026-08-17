@@ -39,7 +39,6 @@ def init_session_state() -> None:
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
-    bm.init_map_state()
 
 
 def apply_fast_result(result_data: dict) -> None:
@@ -50,8 +49,6 @@ def apply_fast_result(result_data: dict) -> None:
     어느 순서로 띄울지는 운용자가 만든 플레이북이 결정하므로, 모델이 화면 이름을
     지어낼 여지가 없다.
     """
-    bm.apply_map_updates(result_data.get("map_updates") or {})
-
     situation = result_data.get("situation") or {}
     raw_type = str(situation.get("type", "") or "").strip()
     focus_cell = str(situation.get("focus_cell", "") or "").strip().upper()

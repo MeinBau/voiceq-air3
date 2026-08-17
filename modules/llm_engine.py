@@ -7,8 +7,8 @@ strict tool-calling 지원이 들쭉날쭉하므로, tool 강제 대신 "순수 
 JSON을 강제한다.
 
 지연시간 설계 (핵심):
-    화면 표출에 필요한 건 cop_layout과 map_updates뿐이다. 상황판·일지·요약까지
-    한 번에 생성하면 출력 토큰이 3~4배로 늘어 화면이 그만큼 늦게 뜬다.
+    화면 표출에 필요한 건 situation(상황 유형 + CCTV 방향) 하나뿐이다. 상황판·
+    일지·요약까지 한 번에 생성하면 출력 토큰이 3~4배로 늘어 화면이 그만큼 늦게 뜬다.
     두 호출을 스레드로 동시에 던지고, 표출 경로의 지연시간을 따로 측정한다.
     순차 실행이면 두 지연이 더해지지만 병렬이면 느린 쪽 하나만큼만 걸린다.
 
@@ -117,7 +117,7 @@ def provider_extra_body(provider_id: str) -> dict | None:
     """공급자별 비표준 파라미터. 지원하지 않는 곳에 보내면 400이 난다."""
     return REASONING_PARAM if provider_id == "openrouter" else None
 
-FAST_KEYS = ("situation", "map_updates")
+FAST_KEYS = ("situation",)
 FULL_KEYS = ("context_memory", "situation_board", "operation_log_entry")
 
 _CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE | re.MULTILINE)
