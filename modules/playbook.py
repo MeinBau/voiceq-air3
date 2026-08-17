@@ -184,22 +184,34 @@ def _best_match(
 def _best_matches(
     candidates: list[dict], utterance: str, used: set[str] | None, max_count: int
 ) -> list[dict]:
-    """_best_match를 반복해서 관련도 높은 순으로 최대 max_count개를 고른다.
+    """관련도 높은 순으로 최대 max_count개를 고르되, 언급된 장소마다 먼저 하나씩 배정한다.
 
-    슬롯 하나에 진짜 관련 있는 카메라가 여러 대일 수 있다(예: 한 시설을 찍는
-    출입구·내부·외부 CCTV). 매번 고른 것을 used에 더해가며 다시 뽑기 때문에
-    같은 카메라가 중복으로 나오지 않고, _best_match가 "더 관련 있는 게 없으면
-    None"을 돌려주므로 억지로 max_count를 채우지도 않는다 — 관련도가 진짜
-    있는 만큼만 채워진다.
+    "탄약고 부근, 발전소 부근"처럼 서로 다른 장소가 같이 언급되면, 단순히
+    점수 1등부터 max_count개를 뽑을 경우 카메라가 많은 장소(예: 탄약고
+    7대) 하나가 점수 동점자 목록을 다 차지해서 다른 장소(발전소 3대)는
+    하나도 못 뜨는 문제가 생긴다. 그래서 먼저 발언에 나온 장소 순서대로
+    "그 장소 이름이 명칭에 들어간 카메라 중 1등"을 하나씩 배정하고, 남는
+    자리만 전체 후보 중 점수 순으로 채운다.
     """
-    picked: list[dict] = []
     running_used = set(used or ())
-    for _ in range(max(max_count, 0)):
+    picked: list[dict] = []
+
+    for location in sources.mentioned_locations(utterance):
+        if len(picked) >= max_count:
+            break
+        loc_pool = [c for c in candidates if location in c["name"]]
+        match = _best_match(loc_pool, utterance, running_used)
+        if match is not None:
+            picked.append(match)
+            running_used.add(match["id"])
+
+    while len(picked) < max_count:
         match = _best_match(candidates, utterance, running_used)
         if match is None:
             break
         picked.append(match)
         running_used.add(match["id"])
+
     return picked
 
 

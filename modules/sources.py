@@ -67,6 +67,35 @@ def mentioned_directions(text: str) -> list[str]:
     return found
 
 
+@lru_cache(maxsize=1)
+def _facility_names() -> list[str]:
+    """base_map.json에 등록된 실제 시설명. 발언에서 "장소"를 인식하는 기준 어휘.
+
+    긴 이름부터 검사해야 "활주로"가 "활주로 09/27"보다 먼저 잡혀 엉뚱하게
+    쪼개지는 일을 막는다.
+    """
+    names = [f["name"] for f in bm.load_base_map()["facilities"]]
+    return sorted(set(names), key=len, reverse=True)
+
+
+def mentioned_locations(text: str) -> list[str]:
+    """발언에 그대로 등장하는 시설명들. 발언에 나온 순서대로 돌려준다.
+
+    "탄약고 부근, 발전소 부근"처럼 서로 다른 장소가 여러 번 언급됐을 때,
+    카메라가 많은 장소 하나가 후보를 독식하지 않도록 각 장소를 먼저 알아내는
+    용도다(_best_matches에서 장소별로 최소 1대씩 우선 배정할 때 쓴다).
+    """
+    if not text:
+        return []
+    found, remaining = [], text
+    for name in _facility_names():
+        if name in remaining:
+            found.append(name)
+            remaining = remaining.replace(name, "")
+    found.sort(key=lambda n: text.find(n))
+    return found
+
+
 def text_score(source: dict, text: str, mentioned_dirs: list[str]) -> float:
     """발언·맥락 텍스트와 소스의 태그·명칭이 얼마나 겹치는지.
 
