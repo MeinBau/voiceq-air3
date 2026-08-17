@@ -55,23 +55,25 @@ def cell_of(source_id: str) -> str:
 
 
 # 복합 방위를 먼저 잡아야 "북서"가 "북"+"서"로 쪼개지지 않는다.
-_DIRECTIONS = ["북서", "북동", "남서", "남동", "북", "남", "동", "서"]
+DIRECTIONS = ["북서", "북동", "남서", "남동", "북", "남", "동", "서"]
 
 
-def _mentioned_directions(text: str) -> list[str]:
+def mentioned_directions(text: str) -> list[str]:
     found, remaining = [], text
-    for direction in _DIRECTIONS:
+    for direction in DIRECTIONS:
         if direction in remaining:
             found.append(direction)
             remaining = remaining.replace(direction, "")
     return found
 
 
-def _text_score(source: dict, text: str, mentioned_dirs: list[str]) -> float:
+def text_score(source: dict, text: str, mentioned_dirs: list[str]) -> float:
     """발언·맥락 텍스트와 소스의 태그·명칭이 얼마나 겹치는지.
 
     한국어 형태소 분석기를 쓰지 않고 부분 문자열 매칭만 한다. 태그가 "무인기",
-    "활주로" 같은 명사라 조사가 붙어도("무인기가") 그대로 걸린다.
+    "활주로" 같은 명사라 조사가 붙어도("무인기가") 그대로 걸린다. 좌표 없이
+    카메라를 고르는 방법이 이것뿐이므로, 플레이북 슬롯 해석(playbook.py)도
+    이 함수를 그대로 쓴다.
     """
     if not text:
         return 0.0
@@ -85,7 +87,7 @@ def _text_score(source: dict, text: str, mentioned_dirs: list[str]) -> float:
     # 발언에 방위가 나왔는데 소스가 다른 방위를 담당하면 감점.
     # "북서방 무인기"에 동측 울타리 카메라가 올라오는 것을 막는다.
     if mentioned_dirs:
-        source_dirs = [d for d in source["tags"] if d in _DIRECTIONS]
+        source_dirs = [d for d in source["tags"] if d in DIRECTIONS]
         if source_dirs:
             overlap = any(
                 set(mentioned) & set(source_dir)
@@ -117,11 +119,11 @@ def shortlist(utterance: str, context_summary: str = "", limit: int = 20) -> lis
     track_cells = [t["cell"] for t in _current_tracks()]
     haystack = f"{utterance} {context_summary}"
     # 방위는 발언 본문에서만 뽑는다. 누적 요약의 옛 방위가 현재 판단을 흐리지 않도록.
-    mentioned_dirs = _mentioned_directions(utterance)
+    mentioned_dirs = mentioned_directions(utterance)
 
     scored = []
     for source in load_catalog():
-        score = _text_score(source, haystack, mentioned_dirs)
+        score = text_score(source, haystack, mentioned_dirs)
         score += _proximity_score(source, track_cells)
         # priority_hint가 낮을수록(중요할수록) 약간 가산.
         score += (6 - source["priority_hint"]) * 0.4

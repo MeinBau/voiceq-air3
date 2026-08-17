@@ -9,7 +9,6 @@ import time
 
 import streamlit as st
 
-from modules import base_map as bm
 from modules import context_memory as cm
 from modules import layout_renderer as lr
 from modules import organization as org
@@ -86,7 +85,6 @@ def run_utterance(speaker: str, utterance: str) -> None:
         user_corrections=st.session_state.user_corrections,
         speaker_desc=org.describe_speaker(speaker),
         utterance=utterance,
-        map_state_text=bm.static_context_for_llm(),
         situation_list_text=pb.describe_for_llm(),
     )
     full_turn = prompts.build_full_turn(
@@ -111,7 +109,7 @@ def run_utterance(speaker: str, utterance: str) -> None:
 
     timestamp = time.strftime("%H:%M:%S")
     if result.fast:
-        cm.apply_fast_result(result.fast.data)
+        cm.apply_fast_result(result.fast.data, utterance)
         st.session_state.display_latency_history.append(result.display_latency)
     if result.full:
         cm.apply_full_result(result.full.data, speaker=speaker, timestamp=timestamp)
@@ -261,16 +259,10 @@ tab_wall, tab_book, tab_log, tab_memory = st.tabs(
 
 with tab_wall:
     if st.session_state.situation_type:
-        cols = st.columns([2, 1, 3])
+        cols = st.columns([2, 4])
         cols[0].metric("판정된 상황 유형", st.session_state.situation_type)
-        cols[1].metric(
-            "상황 격자",
-            st.session_state.situation_focus,
-            help="사건의 정확한 발생 위치가 아니라, 어느 방향의 CCTV를 띄울지 고르기 "
-            "위한 대략적인 참고 좌표입니다.",
-        )
         if st.session_state.situation_reason:
-            cols[2].caption(f"판단 근거: {st.session_state.situation_reason}")
+            cols[1].caption(f"판단 근거: {st.session_state.situation_reason}")
         if st.session_state.situation_unmatched:
             st.warning(
                 f"모델이 낸 유형 '{st.session_state.situation_unmatched}' 은 플레이북에 없어 "
@@ -301,9 +293,9 @@ with tab_book:
             if kind == "fixed":
                 desc = sources.name_of(spec.get("source_id", ""))
             elif kind == "nearest_cctv":
-                desc = "상황 격자(대략적 방향)에서 가장 가까운 CCTV를 자동 선택"
+                desc = "발언에 언급된 방위·시설명과 가장 관련 있는 CCTV를 자동 선택"
             elif kind == "prefix":
-                desc = f"{spec.get('prefix')}* 중 상황 격자(대략적 방향)에서 가장 가까운 것"
+                desc = f"{spec.get('prefix')}* 중 발언 내용과 가장 관련 있는 것"
             else:
                 desc = "지정 그룹 중 가장 가까운 것"
             st.caption(f"• **{name}** — {desc}")
@@ -330,15 +322,18 @@ with tab_book:
     c2.caption("저장하면 data/cop_playbook.json 에 기록됩니다.")
 
     st.divider()
-    st.markdown("**미리보기** — 상황 유형을 고르면 실제 배치 결과를 확인할 수 있습니다.")
+    st.markdown(
+        "**미리보기** — 상황 유형과 예시 발언을 넣으면 실제 배치 결과를 확인할 수 있습니다."
+    )
     pc1, pc2 = st.columns(2)
     preview_situation = pc1.selectbox("상황 유형", pb.situation_names())
-    preview_cell = pc2.text_input(
-        "상황 격자",
-        value="E4",
-        help="사건의 정확한 위치가 아니라 CCTV 선택용 대략적 방향 좌표입니다.",
+    preview_utterance = pc2.text_input(
+        "예시 발언 (선택)",
+        placeholder="예: 북서방 상공에 무인기 식별",
+        help="비워두면 각 슬롯의 첫 번째 후보가 선택됩니다. 방위·시설명을 넣으면 "
+        "그 발언과 가장 관련 있는 CCTV가 어떻게 선택되는지 볼 수 있습니다.",
     )
-    preview_layout, preview_un = pb.build_layout(preview_situation, preview_cell.strip().upper())
+    preview_layout, preview_un = pb.build_layout(preview_situation, preview_utterance.strip())
     for it in preview_layout:
         st.caption(f"{it['priority']}. **{it['position']}** — {it['name']} `{it['source_id']}`"
                    f"  ← 슬롯: {it['slot']}")

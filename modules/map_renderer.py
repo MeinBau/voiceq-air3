@@ -1,10 +1,10 @@
 """가상비행단 배치도 SVG 렌더링 — 위성사진 느낌의 기지 조감도.
 
-이 지도는 상황에 따라 바뀌지 않는 "고정 배치도"다. 지도 위에 얹는 유일한
-동적 정보는 "지금 COP 화면(비디오월)에 떠 있는 CCTV가 어디를 보고 있는가"
-뿐이다. 항적·경보수준·자산 가동상태처럼 LLM의 추정이 필요한 정보는 더 이상
-지도에 올리지 않는다 — 정확한 위치를 모르는 것을 지도에 억지로 찍으면
-"그 지점에 실재한다"는 그림이 되어 보는 사람을 오도하기 때문이다.
+이 지도는 상황에 따라 바뀌지 않는 "고정 배치도"다. 지도 위에는 두 가지만
+얹는다 — ① 카탈로그에 있는 모든 CCTV의 위치(회색 점), ② 지금 COP 화면
+(비디오월)에 떠 있는 CCTV의 위치(빨간 점). 항적·경보수준·자산 가동상태처럼
+LLM의 추정이 필요한 정보는 올리지 않는다 — 정확한 위치를 모르는 것을 지도에
+억지로 찍으면 "그 지점에 실재한다"는 그림이 되어 보는 사람을 오도하기 때문이다.
 """
 
 from __future__ import annotations
@@ -20,11 +20,12 @@ MARGIN_LEFT = 30
 MARGIN_TOP = 26
 SUBDIV = 4  # 주격자 한 칸을 몇 등분해 보조격자를 그릴지
 
-# 활성 CCTV로 표시할 feed_type. "시스템"(상황판·레이더 화면 등)은 실제로
+# CCTV로 표시할 feed_type. "시스템"(상황판·레이더 화면 등)은 실제로
 # 특정 지점을 비추는 카메라가 아니므로 지도에 찍지 않는다.
 CAMERA_FEED_TYPES = {"CCTV", "열상", "바디캠", "이동형", "조준경"}
 
-ACTIVE_MARKER = "#4FD1C5"
+EXISTING_CAMERA_COLOR = "#6E8A99"
+ACTIVE_CAMERA_COLOR = "#E63946"
 
 # 위성사진 느낌을 내기 위한 팔레트 (지표 · 포장 · 건물 지붕)
 TERRAIN = "#2B3A2E"
@@ -66,6 +67,16 @@ def _rect_for(cells: list[str]) -> tuple[float, float, float, float] | None:
 def _jitter(seed: str, span: int) -> int:
     """같은 입력에는 항상 같은 값. 지형 얼룩을 흩뿌리되 새로고침해도 안 흔들리게."""
     return int(hashlib.md5(seed.encode()).hexdigest(), 16) % span
+
+
+def _existing_camera_cells() -> list[tuple[float, float]]:
+    """카탈로그에 있는 모든 카메라의 위치. 격자 1칸에 여러 대가 있어도 점 하나로 합친다."""
+    cells: set[str] = set()
+    for source in sources.load_catalog():
+        if source["feed_type"] in CAMERA_FEED_TYPES:
+            cells.add(source["cell"])
+    points = [pos for cell in cells if (pos := _center(cell))]
+    return points
 
 
 def _active_camera_markers(active_sources: list[dict] | None) -> list[tuple[float, float, str]]:
@@ -121,13 +132,13 @@ def build_map_svg(active_sources: list[dict] | None = None, compact: bool = Fals
         f'<rect x="{x0}" y="{y0}" width="{x1 - x0}" height="{y1 - y0}" fill="url(#grass)"/>',
     ]
 
-    # --- 수목·초지 얼룩 (지형감) ---
-    for i in range(70):
+    # --- 수목·초지 얼룩 (지형감) — CCTV 점이 잘 보이도록 옅게만 ---
+    for i in range(40):
         cx = x0 + _jitter(f"vx{i}", int(x1 - x0))
         cy = y0 + _jitter(f"vy{i}", int(y1 - y0))
         r = 5 + _jitter(f"vr{i}", 13)
         p.append(
-            f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="#1F2E20" opacity="0.45"/>'
+            f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="#1F2E20" opacity="0.3"/>'
         )
 
     # --- 내부 도로망 ---
@@ -277,14 +288,25 @@ def build_map_svg(active_sources: list[dict] | None = None, compact: bool = Fals
         f'opacity="0.75"/>'
     )
 
-    # --- 지금 COP 화면에 떠 있는 CCTV 위치 — 이 지도가 하는 유일한 동적 표시 ---
-    for x, y, label in _active_camera_markers(active_sources):
+    # --- 기존 CCTV 위치 (배경, 회색 점) ---
+    active_markers = _active_camera_markers(active_sources)
+    active_cells = {(x, y) for x, y, _ in active_markers}
+    for x, y in _existing_camera_cells():
+        if (x, y) in active_cells:
+            continue  # 지금 활성화된 자리는 아래에서 빨간 점으로 다시 그린다.
         p.append(
-            f'<circle cx="{x}" cy="{y}" r="12" fill="{ACTIVE_MARKER}" fill-opacity="0.18" '
-            f'stroke="{ACTIVE_MARKER}" stroke-width="1.4"/>'
+            f'<circle cx="{x}" cy="{y}" r="3.2" fill="{EXISTING_CAMERA_COLOR}" '
+            f'stroke="#0D1210" stroke-width="0.8" opacity="0.85"/>'
         )
-        p.append(f'<circle cx="{x}" cy="{y}" r="6.5" fill="{ACTIVE_MARKER}" stroke="#0D1210" '
-                 f'stroke-width="1.5"/>')
+
+    # --- 지금 COP 화면에 떠 있는 CCTV 위치 (빨간 점) ---
+    for x, y, label in active_markers:
+        p.append(
+            f'<circle cx="{x}" cy="{y}" r="12" fill="{ACTIVE_CAMERA_COLOR}" fill-opacity="0.2" '
+            f'stroke="{ACTIVE_CAMERA_COLOR}" stroke-width="1.4"/>'
+        )
+        p.append(f'<circle cx="{x}" cy="{y}" r="6.5" fill="{ACTIVE_CAMERA_COLOR}" '
+                 f'stroke="#0D1210" stroke-width="1.5"/>')
         if label:
             p.append(
                 f'<text x="{x}" y="{y + 3.5}" fill="#0D1210" font-size="8" font-weight="800" '

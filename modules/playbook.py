@@ -3,14 +3,15 @@
 설계 의도:
     화면 배치를 LLM이 매번 자유롭게 정하면 같은 상황에도 결과가 흔들린다.
     운용 경험이 있는 사람이 "이 상황에는 이 화면을 이 순서로"를 이미 알고 있으므로,
-    그 판단을 데이터로 고정하고 LLM에게는 상황 유형 분류와 위치 특정만 맡긴다.
+    그 판단을 데이터로 고정하고 LLM에게는 상황 유형 분류만 맡긴다.
 
     이 구조가 기획서의 "전문가 정답 레이아웃 대비 일치율 90% 이상" 지표와 직결된다.
     정답이 곧 이 플레이북이므로, 플레이북을 따르면 일치율은 정의상 100%가 되고
     남는 평가 대상은 "상황 유형을 맞게 분류했는가"로 좁혀진다.
 
-    "해당 지역 cctv" 같은 슬롯은 고정할 수 없다. 상황이 난 격자에 따라 달라지므로
-    LLM이 특정한 격자를 받아 코드가 가장 가까운 카메라를 고른다.
+    "해당 지역 cctv" 같은 슬롯은 고정할 수 없다. 발언마다 관련된 방향·시설이
+    다르기 때문이다. LLM에게 좌표를 판단시키는 대신, 발언 텍스트를 코드가 직접
+    읽어 방위 단어·시설명과 태그가 가장 많이 겹치는 카메라를 고른다(sources.text_score).
 """
 
 from __future__ import annotations
@@ -18,7 +19,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from modules import base_map as bm
 from modules import sources
 
 PLAYBOOK_PATH = Path(__file__).resolve().parent.parent / "data" / "cop_playbook.json"
@@ -145,20 +145,23 @@ def describe_for_llm() -> str:
 # ---------- 슬롯 해석 ----------
 
 
-def _nearest(candidates: list[dict], focus_cell: str) -> dict | None:
+def _best_match(candidates: list[dict], utterance: str) -> dict | None:
+    """발언 텍스트와 가장 관련 있는 소스를 고른다. 관련 단서가 없으면 목록의 첫 항목."""
     if not candidates:
         return None
-    if not focus_cell:
+    if not utterance:
         return candidates[0]
-    scored = []
-    for source in candidates:
-        dist = bm.cell_distance(source["cell"], focus_cell)
-        scored.append((dist if dist is not None else 999, source["id"], source))
-    scored.sort(key=lambda x: (x[0], x[1]))
-    return scored[0][2]
+    mentioned_dirs = sources.mentioned_directions(utterance)
+    scored = [
+        (sources.text_score(source, utterance, mentioned_dirs), source["id"], source)
+        for source in candidates
+    ]
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    best_score, _, best_source = scored[0]
+    return best_source if best_score > 0 else candidates[0]
 
 
-def resolve_slot(slot_name: str, focus_cell: str) -> dict | None:
+def resolve_slot(slot_name: str, utterance: str) -> dict | None:
     """슬롯 이름 하나를 실제 화면 소스로 바꾼다. 못 찾으면 None."""
     spec = load_playbook()["slots"].get(slot_name)
     catalog = sources.load_catalog()
@@ -179,23 +182,23 @@ def resolve_slot(slot_name: str, focus_cell: str) -> dict | None:
 
     if kind == "prefix":
         prefix = spec.get("prefix", "")
-        return _nearest([s for s in catalog if s["id"].startswith(prefix)], focus_cell)
+        return _best_match([s for s in catalog if s["id"].startswith(prefix)], utterance)
 
     if kind == "group":
         pool = [
             s for s in catalog
             if any(s["id"].startswith(p) for p in spec.get("prefixes", []))
         ]
-        return _nearest(pool, focus_cell)
+        return _best_match(pool, utterance)
 
     if kind == "nearest_cctv":
         pool = [s for s in catalog if s["feed_type"] in ("CCTV", "열상", "바디캠", "이동형")]
-        return _nearest(pool, focus_cell)
+        return _best_match(pool, utterance)
 
     return None
 
 
-def build_layout(situation_name: str, focus_cell: str = "") -> tuple[list[dict], list[str]]:
+def build_layout(situation_name: str, utterance: str = "") -> tuple[list[dict], list[str]]:
     """상황 유형에서 COP 레이아웃을 만든다.
 
     반환: (레이아웃, 해석 실패한 슬롯 이름들)
@@ -225,12 +228,12 @@ def build_layout(situation_name: str, focus_cell: str = "") -> tuple[list[dict],
     # 어떤 CCTV가 지금 화면에 떠 있는지 한눈에 보여주는 기준 화면이기 때문이다.
     pinned_slot = load_playbook().get("pinned_slot", "")
     if pinned_slot:
-        pinned_source = resolve_slot(pinned_slot, focus_cell)
+        pinned_source = resolve_slot(pinned_slot, utterance)
         if pinned_source is not None:
             _append(pinned_source, pinned_slot, "고정")
 
     for slot_name in situation.get("screens", []):
-        source = resolve_slot(slot_name, focus_cell)
+        source = resolve_slot(slot_name, utterance)
         if source is None:
             unresolved.append(slot_name)
             continue
@@ -242,11 +245,11 @@ def build_layout(situation_name: str, focus_cell: str = "") -> tuple[list[dict],
 
     # --- 빈 자리 채우기 ---
     # 지휘소 대형 화면에 빈 칸이 남아 있으면 안 된다. 상황별 화면을 배치하고 남은 자리는
-    # 상시 표출 목록 → 상황 격자 인근 CCTV 순으로 채운다.
+    # 상시 표출 목록 → 발언과 가장 관련 있는 CCTV 순으로 채운다.
     for slot_name in load_playbook().get("always_on", []):
         if len(layout) >= MAX_PANELS:
             break
-        source = resolve_slot(slot_name, focus_cell)
+        source = resolve_slot(slot_name, utterance)
         if source and source["id"] not in used:
             _append(source, slot_name, "상시")
 
