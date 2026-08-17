@@ -297,7 +297,10 @@ with tab_book:
             elif kind == "prefix":
                 desc = f"{spec.get('prefix')}* 중 발언 내용과 가장 관련 있는 것"
             else:
-                desc = "지정 그룹 중 가장 가까운 것"
+                desc = "지정 그룹 중 발언 내용과 가장 관련 있는 것"
+            max_n = int(spec.get("max", 1) or 1)
+            if kind != "fixed" and max_n > 1:
+                desc += f" — 관련도 높은 순으로 최대 {max_n}개까지 (관련 있는 만큼만)"
             st.caption(f"• **{name}** — {desc}")
 
     edited = st.data_editor(

@@ -181,12 +181,36 @@ def _best_match(
     return pool[0]  # 처음 고르는 슬롯이면 단서가 없어도 뭔가는 보여준다.
 
 
-def resolve_slot(slot_name: str, utterance: str, used: set[str] | None = None) -> dict | None:
-    """슬롯 이름 하나를 실제 화면 소스로 바꾼다. 못 찾으면 None.
+def _best_matches(
+    candidates: list[dict], utterance: str, used: set[str] | None, max_count: int
+) -> list[dict]:
+    """_best_match를 반복해서 관련도 높은 순으로 최대 max_count개를 고른다.
 
-    used는 이미 다른 슬롯이 골라 쓴 source_id 목록이다. 방향/키워드로 후보를
-    직접 검색하는 슬롯(prefix/group/nearest_cctv)에만 적용한다 — fixed 슬롯은
-    대체할 다른 후보가 없으므로 그대로 둔다.
+    슬롯 하나에 진짜 관련 있는 카메라가 여러 대일 수 있다(예: 한 시설을 찍는
+    출입구·내부·외부 CCTV). 매번 고른 것을 used에 더해가며 다시 뽑기 때문에
+    같은 카메라가 중복으로 나오지 않고, _best_match가 "더 관련 있는 게 없으면
+    None"을 돌려주므로 억지로 max_count를 채우지도 않는다 — 관련도가 진짜
+    있는 만큼만 채워진다.
+    """
+    picked: list[dict] = []
+    running_used = set(used or ())
+    for _ in range(max(max_count, 0)):
+        match = _best_match(candidates, utterance, running_used)
+        if match is None:
+            break
+        picked.append(match)
+        running_used.add(match["id"])
+    return picked
+
+
+def resolve_slot(slot_name: str, utterance: str, used: set[str] | None = None) -> list[dict]:
+    """슬롯 이름 하나를 실제 화면 소스 목록으로 바꾼다. 못 찾으면 빈 목록.
+
+    슬롯 정의에 "max"가 있으면(기본값 1) 관련 있는 소스를 그 개수까지 담아
+    여러 타일에 나눠 띄운다. used는 이미 다른 슬롯이 골라 쓴 source_id
+    목록이다. 방향/키워드로 후보를 직접 검색하는 슬롯(prefix/group/
+    nearest_cctv)에만 적용한다 — fixed 슬롯은 대체할 다른 후보가 없으므로
+    그대로 둔다.
     """
     spec = load_playbook()["slots"].get(slot_name)
     catalog = sources.load_catalog()
@@ -194,33 +218,37 @@ def resolve_slot(slot_name: str, utterance: str, used: set[str] | None = None) -
     if spec is None:
         # 플레이북에 정의가 없으면 소스 ID나 명칭으로 직접 지정한 것으로 본다.
         if sources.exists(slot_name):
-            return sources.by_id()[slot_name]
+            return [sources.by_id()[slot_name]]
         for source in catalog:
             if source["name"] == slot_name:
-                return source
-        return None
+                return [source]
+        return []
 
     kind = spec.get("type")
 
     if kind == "fixed":
-        return sources.by_id().get(spec.get("source_id", ""))
+        source = sources.by_id().get(spec.get("source_id", ""))
+        return [source] if source else []
+
+    max_count = max(int(spec.get("max", 1) or 1), 1)
 
     if kind == "prefix":
         prefix = spec.get("prefix", "")
-        return _best_match([s for s in catalog if s["id"].startswith(prefix)], utterance, used)
+        pool = [s for s in catalog if s["id"].startswith(prefix)]
+        return _best_matches(pool, utterance, used, max_count)
 
     if kind == "group":
         pool = [
             s for s in catalog
             if any(s["id"].startswith(p) for p in spec.get("prefixes", []))
         ]
-        return _best_match(pool, utterance, used)
+        return _best_matches(pool, utterance, used, max_count)
 
     if kind == "nearest_cctv":
         pool = [s for s in catalog if s["feed_type"] in ("CCTV", "열상", "바디캠", "이동형")]
-        return _best_match(pool, utterance, used)
+        return _best_matches(pool, utterance, used, max_count)
 
-    return None
+    return []
 
 
 def build_layout(situation_name: str, utterance: str = "") -> tuple[list[dict], list[str]]:
@@ -253,20 +281,22 @@ def build_layout(situation_name: str, utterance: str = "") -> tuple[list[dict], 
     # 어떤 CCTV가 지금 화면에 떠 있는지 한눈에 보여주는 기준 화면이기 때문이다.
     pinned_slot = load_playbook().get("pinned_slot", "")
     if pinned_slot:
-        pinned_source = resolve_slot(pinned_slot, utterance, used)
-        if pinned_source is not None:
-            _append(pinned_source, pinned_slot, "고정")
+        for source in resolve_slot(pinned_slot, utterance, used):
+            _append(source, pinned_slot, "고정")
 
     for slot_name in situation.get("screens", []):
-        source = resolve_slot(slot_name, utterance, used)
-        if source is None:
+        resolved = resolve_slot(slot_name, utterance, used)
+        if not resolved:
             unresolved.append(slot_name)
             continue
-        if source["id"] in used:
-            continue  # fixed 슬롯이 이미 쓰인 소스를 가리키는 경우만 여기 걸린다.
+        for source in resolved:
+            if source["id"] in used:
+                continue  # fixed 슬롯이 이미 쓰인 소스를 가리키는 경우만 여기 걸린다.
+            if len(layout) >= MAX_PANELS:
+                break
+            _append(source, slot_name, "상황")
         if len(layout) >= MAX_PANELS:
             break
-        _append(source, slot_name, "상황")
 
     # --- 빈 자리 채우기 ---
     # 지휘소 대형 화면에 빈 칸이 남아 있으면 안 된다. 상황별 화면을 배치하고 남은 자리는
@@ -274,9 +304,11 @@ def build_layout(situation_name: str, utterance: str = "") -> tuple[list[dict], 
     for slot_name in load_playbook().get("always_on", []):
         if len(layout) >= MAX_PANELS:
             break
-        source = resolve_slot(slot_name, utterance, used)
-        if source and source["id"] not in used:
-            _append(source, slot_name, "상시")
+        for source in resolve_slot(slot_name, utterance, used):
+            if len(layout) >= MAX_PANELS:
+                break
+            if source["id"] not in used:
+                _append(source, slot_name, "상시")
 
     # 배치가 확정된 뒤에 자리 크기를 다시 계산한다. 화면 수에 맞춰 2행 6열을
     # 빈틈없이 나눠 갖되, 우선순위가 높을수록 큰 자리를 차지한다.
@@ -337,6 +369,6 @@ def validate_table(rows: list[dict]) -> list[str]:
             continue
         for i in range(5):
             slot = str(row.get(f"{i + 1}순위", "") or "").strip()
-            if slot and resolve_slot(slot, "") is None:
+            if slot and not resolve_slot(slot, ""):
                 problems.append(f"'{name}' {i + 1}순위 — 알 수 없는 화면: {slot}")
     return problems

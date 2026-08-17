@@ -6,6 +6,7 @@
     "prefix": "지정한 접두어로 시작하는 소스 중 발언 내용과 가장 관련 있는 것을 선택",
     "group": "여러 소스를 우선순위대로 시도"
   },
+  "slot_types_note": "nearest_cctv/prefix/group 슬롯에 \"max\"를 주면(기본값 1) 관련도 높은 순으로 그 개수까지 여러 타일에 나눠 띄운다. 정말 관련 있는 후보가 그만큼 없으면 억지로 채우지 않고 있는 만큼만 띄운다.",
   "pinned_slot": "비행단 전장상황도",
   "slots": {
     "비행단 전장상황도": { "type": "fixed", "source_id": "SYS-BASEMAP" },
@@ -20,9 +21,9 @@
     "드론탐지체계": { "type": "fixed", "source_id": "UAS-DET" },
     "무인기 추적 항적도": { "type": "fixed", "source_id": "UAS-TRACK" },
     "TOD화면": { "type": "prefix", "prefix": "TOD-" },
-    "해당 지역 cctv": { "type": "nearest_cctv" },
-    "낙탄 지역 cctv": { "type": "nearest_cctv" },
-    "활주로 및 유도로 cctv": { "type": "group", "prefixes": ["CCTV-RWY-", "CCTV-TWY-"] },
+    "해당 지역 cctv": { "type": "nearest_cctv", "max": 3 },
+    "낙탄 지역 cctv": { "type": "nearest_cctv", "max": 3 },
+    "활주로 및 유도로 cctv": { "type": "group", "prefixes": ["CCTV-RWY-", "CCTV-TWY-"], "max": 2 },
     "초병 바디캠": { "type": "prefix", "prefix": "CAM-GP-" },
     "순찰차 카메라": { "type": "prefix", "prefix": "CAM-PTL-" }
   },
