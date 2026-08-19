@@ -66,6 +66,48 @@ def influence_of(title: str) -> float:
     return info["influence"] if info else 0.5
 
 
+# 작전상황일지 "부서" 열에 쓸 표준 약어. data/organization.json의 unit id -> 약어.
+# 편제에 새 부대가 추가되면 여기도 같이 늘려야 한다.
+_UNIT_ABBR = {
+    "WING": "비행단본부",
+    "OPS": "작전전대",
+    "FS-1": "101대대",
+    "FS-2": "102대대",
+    "ATC": "관제대대",
+    "WX": "기상대대",
+    "MX": "정비전대",
+    "MX-AC": "기체정비대",
+    "MX-PT": "부품정비대",
+    "MX-EQ": "장비정비대",
+    "SEC": "방호전대",
+    "MP": "군경대대",
+    "ENG": "공병대대",
+    "CBRN": "화생방대",
+    "AD": "방공포대",
+    "SPT": "지원전대",
+    "SUP": "보급대대",
+    "TRN": "수송대대",
+    "COM": "정통대대",
+    "WEL": "복지대대",
+    "MED": "의무대대",
+}
+
+
+def department_abbr(speaker_title: str) -> str:
+    """작전상황일지 '부서' 열 값. 화자가 소속된 부대를 표준 약어로 바꾼다.
+
+    회의에서 "정보통신대대"처럼 전체 명칭으로 불러도, 여기서는 화자가 실제로
+    속한 편제(organization.json)를 조회해 항상 같은 약어로 고정 출력하므로
+    표기가 흔들리지 않는다. 편제에 없는 화자(직접입력)는 부서를 알 수 없으니
+    화자명을 그대로 쓴다.
+    """
+    info = lookup(speaker_title)
+    if not info:
+        return speaker_title
+    unit = info["unit"]
+    return _UNIT_ABBR.get(unit, _unit_names().get(unit, unit))
+
+
 def org_tree_text() -> str:
     """편제를 계층 텍스트로. UI 표시용."""
     units = load_org()["units"]

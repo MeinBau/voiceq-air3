@@ -8,6 +8,7 @@ import html
 import streamlit as st
 
 from modules import map_renderer as mr
+from modules import organization as org
 from modules import playbook as pb
 
 
@@ -105,28 +106,90 @@ def _panel_html(
     )
 
 
+_CELL_STYLE = "padding:6px 10px; border:1px solid rgba(255,255,255,0.12); vertical-align:top; font-size:0.85rem;"
+_HEAD_STYLE = _CELL_STYLE + " background:rgba(255,255,255,0.06); font-weight:700;"
+
+
+def _hhmm(timestamp: str) -> str:
+    """"HH:MM:SS" 등으로 기록된 시각을 24시간제 "HH:MM"으로 자른다."""
+    parts = str(timestamp or "").split(":")
+    return f"{parts[0]}:{parts[1]}" if len(parts) >= 2 else str(timestamp or "")
+
+
+def _log_row_groups(operation_log: list[dict]) -> list[tuple[dict, int]]:
+    """사태별 entries를 (표시행, 그 사태가 차지하는 행 수) 목록으로 펼친다.
+
+    한 사태에 여러 부서가 각각 조치했으면 부서 수만큼 행이 나뉜다. '시간'은
+    부서마다 보고 순간이 달라도 그 사태를 최초로 기록한 시각(entries[0])
+    하나로 고정한다 — 표에서 같은 사태의 시간·상황 열을 병합해서 보여주기
+    위해서다. 최신 사태가 위로 오도록 역순으로 돈다.
+    """
+    groups: list[tuple[dict, int]] = []
+    for event in reversed(operation_log):
+        entries = event.get("entries", [])
+        if not entries:
+            continue
+        event_time = _hhmm(entries[0].get("timestamp", ""))
+        situation = event.get("title", "") or event.get("event_id", "")
+        span = len(entries)
+        for entry in entries:
+            groups.append(
+                (
+                    {
+                        "시간": event_time,
+                        "상황": situation,
+                        "부서": org.department_abbr(entry.get("speaker", "")),
+                        "조치내용": entry.get("detail", ""),
+                    },
+                    span,
+                )
+            )
+    return groups
+
+
+def operation_log_rows(operation_log: list[dict]) -> list[dict]:
+    """CSV 내보내기용 평평한 표. 시간·상황 열이 같은 사태 안에서는 행마다 반복된다."""
+    return [row for row, _ in _log_row_groups(operation_log)]
+
+
+def _log_table_html(operation_log: list[dict]) -> str:
+    groups = _log_row_groups(operation_log)
+    body = []
+    i = 0
+    while i < len(groups):
+        row, span = groups[i]
+        body.append(
+            "<tr>"
+            f'<td rowspan="{span}" style="{_CELL_STYLE}">{_esc(row["시간"])}</td>'
+            f'<td rowspan="{span}" style="{_CELL_STYLE}">{_esc(row["상황"])}</td>'
+            f'<td style="{_CELL_STYLE}">{_esc(row["부서"])}</td>'
+            f'<td style="{_CELL_STYLE}">{_esc(row["조치내용"])}</td>'
+            "</tr>"
+        )
+        for k in range(1, span):
+            sub_row, _ = groups[i + k]
+            body.append(
+                "<tr>"
+                f'<td style="{_CELL_STYLE}">{_esc(sub_row["부서"])}</td>'
+                f'<td style="{_CELL_STYLE}">{_esc(sub_row["조치내용"])}</td>'
+                "</tr>"
+            )
+        i += span
+    header = "".join(f'<th style="{_HEAD_STYLE}">{h}</th>' for h in ("시간", "상황", "부서", "조치내용"))
+    return (
+        '<table style="width:100%; border-collapse:collapse; margin-top:6px;">'
+        f"<tr>{header}</tr>{''.join(body)}</table>"
+    )
+
+
 def render_operation_log(operation_log: list[dict]) -> None:
     st.subheader("작전상황일지")
     if not operation_log:
         st.info("아직 기록된 사건이 없습니다.")
         return
+    if not any(event.get("entries") for event in operation_log):
+        st.info("기록된 세부 내용이 없습니다.")
+        return
 
     st.caption(f"진행 중인 사태 {len(operation_log)}건 — 같은 상황의 후속 보고는 하나의 사태로 묶입니다.")
-
-    for i, event in enumerate(reversed(operation_log), start=1):
-        entries = event.get("entries", [])
-        header = f"[{event.get('event_id', f'사태{i}')}] {event.get('title', '')} · 기록 {len(entries)}건"
-        with st.expander(header, expanded=(i == 1)):
-            if not entries:
-                st.caption("기록된 세부 내용이 없습니다.")
-                continue
-            for entry in entries:
-                timestamp = entry.get("timestamp", "")
-                speaker = entry.get("speaker", "")
-                meta = " · ".join(x for x in (timestamp, speaker) if x)
-                st.markdown(
-                    f"<div style='border-left:3px solid #2A6F77; padding:2px 0 2px 12px; margin-bottom:10px;'>"
-                    f"<div style='font-size:0.75rem; opacity:0.55;'>{meta}</div>"
-                    f"<div>{entry.get('detail', '')}</div></div>",
-                    unsafe_allow_html=True,
-                )
+    st.markdown(_log_table_html(operation_log), unsafe_allow_html=True)

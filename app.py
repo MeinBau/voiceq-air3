@@ -347,22 +347,11 @@ with tab_log:
     lr.render_operation_log(st.session_state.operation_log)
     if st.session_state.operation_log:
         buffer = io.StringIO()
-        writer = csv.DictWriter(
-            buffer, fieldnames=["event_id", "title", "timestamp", "speaker", "detail"]
-        )
+        writer = csv.DictWriter(buffer, fieldnames=["시간", "상황", "부서", "조치내용"])
         writer.writeheader()
-        # 사태별로 묶인 구조를 한 줄에 기록 1건씩 펼쳐서 내보낸다.
-        for event in st.session_state.operation_log:
-            for entry in event.get("entries", []):
-                writer.writerow(
-                    {
-                        "event_id": event.get("event_id", ""),
-                        "title": event.get("title", ""),
-                        "timestamp": entry.get("timestamp", ""),
-                        "speaker": entry.get("speaker", ""),
-                        "detail": entry.get("detail", ""),
-                    }
-                )
+        # 화면 표와 같은 규칙(사태당 부서 수만큼 행 분리)으로 펼쳐서 내보낸다.
+        for row in lr.operation_log_rows(st.session_state.operation_log):
+            writer.writerow(row)
         st.download_button(
             "작전상황일지 CSV 다운로드",
             data=buffer.getvalue().encode("utf-8-sig"),
