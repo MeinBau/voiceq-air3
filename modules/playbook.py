@@ -192,9 +192,17 @@ def _best_matches(
     하나도 못 뜨는 문제가 생긴다. 그래서 먼저 발언에 나온 장소 순서대로
     "그 장소 이름이 명칭에 들어간 카메라 중 1등"을 하나씩 배정하고, 남는
     자리만 전체 후보 중 점수 순으로 채운다.
+
+    남는 자리를 채울 때도 같은 지역(sources.region_of)에서 두 번째 카메라를
+    또 뽑지 않는다. 탄약고 하나에 카메라가 7대 있으면 태그가 전부 겹쳐서
+    점수 상위 N개가 전부 탄약고 카메라로 채워지기 쉽다 — 그러면 정작 다른
+    지역 상황은 화면에 하나도 안 뜬다. 지역별로 최대 1대까지만 허용하고,
+    그래도 자리가 남으면(=서로 다른 지역 후보가 다 떨어지면) 지역 제한을
+    풀고 채운다.
     """
     running_used = set(used or ())
     picked: list[dict] = []
+    used_regions: set[str] = set()
 
     for location in sources.mentioned_locations(utterance):
         if len(picked) >= max_count:
@@ -204,13 +212,18 @@ def _best_matches(
         if match is not None:
             picked.append(match)
             running_used.add(match["id"])
+            used_regions.add(sources.region_of(match))
 
     while len(picked) < max_count:
-        match = _best_match(candidates, utterance, running_used)
+        pool = [c for c in candidates if sources.region_of(c) not in used_regions]
+        match = _best_match(pool, utterance, running_used)
+        if match is None:
+            match = _best_match(candidates, utterance, running_used)
         if match is None:
             break
         picked.append(match)
         running_used.add(match["id"])
+        used_regions.add(sources.region_of(match))
 
     return picked
 

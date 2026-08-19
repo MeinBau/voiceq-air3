@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -44,6 +45,51 @@ def exists(source_id: str) -> bool:
 def name_of(source_id: str) -> str:
     source = by_id().get(source_id)
     return source["name"] if source else source_id
+
+
+# ---------- 지역 그룹핑 ----------
+
+_PERIMETER_RE = re.compile(r"^CCTV-PERI-([NSWE])\d+$")
+
+
+@lru_cache(maxsize=1)
+def _region_codes() -> list[str]:
+    """지역으로 묶을 코드 후보(시설 26곳 + 초소 8곳 + 대공자산 7곳), 긴 것부터.
+
+    "GATE"(정문)와 "GATE-R"(후문)처럼 한쪽이 다른 쪽의 접두어인 코드가 섞여
+    있다. 짧은 코드를 먼저 검사하면 후문 카메라가 정문 지역으로 잘못 묶인다.
+    """
+    base = bm.load_base_map()
+    codes = (
+        [f["id"] for f in base["facilities"]]
+        + [g["id"] for g in base["sentry_posts"]]
+        + [a["id"] for a in base["air_defense"]]
+    )
+    # set()으로 중복만 제거하면 길이가 같은 코드끼리(예: "NAV" vs "RWY") 어느 쪽이
+    # 먼저 걸리는지가 해시 순서에 좌우돼 실행마다 결과가 흔들린다. dict.fromkeys로
+    # 원래 등장 순서를 지켜야 길이가 같을 때도 항상 같은 코드가 이긴다.
+    return sorted(dict.fromkeys(codes), key=len, reverse=True)
+
+
+def region_of(source: dict) -> str:
+    """카메라가 속한 '지역'. 같은 지역 카메라는 한 슬롯에 하나만 고른다(playbook._best_matches).
+
+    시설 하나를 외부/출입구/내부처럼 여러 각도로 찍거나(탄약고만 7대), 초소
+    하나를 CCTV+바디캠 2대로, 대공자산 하나를 CCTV+조준경 2대로 찍는 경우가
+    있다 — 이런 카메라의 ID에는 시설·초소·대공자산 코드가 그대로 들어 있으므로
+    그 코드를 지역으로 쓴다. 외곽 울타리는 방위별로 구간이 7~8개씩 있어 코드
+    매칭만으로는 안 묶이므로 별도 정규식으로 방위 단위로 묶는다. 둘 다 안
+    걸리면 그 카메라 자체가 유일한 지역이다(기존 동작과 동일).
+    """
+    sid = source["id"]
+    m = _PERIMETER_RE.match(sid)
+    if m:
+        return f"PERI-{m.group(1)}"
+    haystack = f"-{sid}-"
+    for code in _region_codes():
+        if f"-{code}-" in haystack:
+            return code
+    return sid
 
 
 def cell_of(source_id: str) -> str:
