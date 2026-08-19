@@ -53,22 +53,12 @@ _PERIMETER_RE = re.compile(r"^CCTV-PERI-([NSWE])\d+$")
 
 
 @lru_cache(maxsize=1)
-def _region_codes() -> list[str]:
-    """지역으로 묶을 코드 후보(시설 26곳 + 초소 8곳 + 대공자산 7곳), 긴 것부터.
-
-    "GATE"(정문)와 "GATE-R"(후문)처럼 한쪽이 다른 쪽의 접두어인 코드가 섞여
-    있다. 짧은 코드를 먼저 검사하면 후문 카메라가 정문 지역으로 잘못 묶인다.
-    """
+def _region_codes() -> set[str]:
+    """지역으로 인정할 코드 집합(시설 26곳 + 초소 8곳 + 대공자산 7곳)."""
     base = bm.load_base_map()
-    codes = (
-        [f["id"] for f in base["facilities"]]
-        + [g["id"] for g in base["sentry_posts"]]
-        + [a["id"] for a in base["air_defense"]]
-    )
-    # set()으로 중복만 제거하면 길이가 같은 코드끼리(예: "NAV" vs "RWY") 어느 쪽이
-    # 먼저 걸리는지가 해시 순서에 좌우돼 실행마다 결과가 흔들린다. dict.fromkeys로
-    # 원래 등장 순서를 지켜야 길이가 같을 때도 항상 같은 코드가 이긴다.
-    return sorted(dict.fromkeys(codes), key=len, reverse=True)
+    return {f["id"] for f in base["facilities"]} \
+        | {g["id"] for g in base["sentry_posts"]} \
+        | {a["id"] for a in base["air_defense"]}
 
 
 def region_of(source: dict) -> str:
@@ -76,19 +66,34 @@ def region_of(source: dict) -> str:
 
     시설 하나를 외부/출입구/내부처럼 여러 각도로 찍거나(탄약고만 7대), 초소
     하나를 CCTV+바디캠 2대로, 대공자산 하나를 CCTV+조준경 2대로 찍는 경우가
-    있다 — 이런 카메라의 ID에는 시설·초소·대공자산 코드가 그대로 들어 있으므로
-    그 코드를 지역으로 쓴다. 외곽 울타리는 방위별로 구간이 7~8개씩 있어 코드
-    매칭만으로는 안 묶이므로 별도 정규식으로 방위 단위로 묶는다. 둘 다 안
-    걸리면 그 카메라 자체가 유일한 지역이다(기존 동작과 동일).
+    있다 — 이런 카메라의 ID는 항상 "{피드유형}-{코드}-{각도}" 형태라, 접두어
+    바로 다음 자리에 시설·초소·대공자산 코드가 들어간다. 그 자리에 있는
+    코드만 지역으로 인정한다.
+
+    아무 자리나 부분 문자열로 찾으면 안 된다 — "출입구"를 뜻하는 접미어가
+    모든 시설에서 공통으로 "-GATE"라서, "발전소 출입구 CCTV"(CCTV-POW-GATE)가
+    "기지 정문" 시설 코드(GATE)와 우연히 겹쳐 정문 지역으로 잘못 묶인 적이
+    있었다. 접두어 바로 뒤 1~2토큰만 후보로 본다("GATE-R"처럼 코드 자체가
+    하이픈을 포함하는 경우가 있어 2토큰까지 시도).
+
+    외곽 울타리는 방위별로 구간이 7~8개씩 있고 이 자리 규칙으로는 안 걸리므로
+    별도 정규식으로 방위 단위로 묶는다. 둘 다 안 걸리면 그 카메라 자체가
+    유일한 지역이다(기존 동작과 동일).
     """
     sid = source["id"]
     m = _PERIMETER_RE.match(sid)
     if m:
         return f"PERI-{m.group(1)}"
-    haystack = f"-{sid}-"
-    for code in _region_codes():
-        if f"-{code}-" in haystack:
-            return code
+    tokens = sid.split("-")
+    if len(tokens) < 2:
+        return sid
+    rest = tokens[1:]
+    codes = _region_codes()
+    for n in (2, 1):
+        if len(rest) >= n:
+            candidate = "-".join(rest[:n])
+            if candidate in codes:
+                return candidate
     return sid
 
 
