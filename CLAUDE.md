@@ -1,3 +1,4 @@
+@HARNESS.md
 # CLAUDE.md — VOICE-CUE 해커톤 프로토타입 개발 가이드
 
 이 문서는 Claude Code가 이 저장소에서 작업할 때 참고하는 프로젝트 컨텍스트입니다.
