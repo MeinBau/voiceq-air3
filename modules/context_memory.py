@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 
 import streamlit as st
 
 from modules import llm_engine as engine
+from modules import map_icons as mi
+from modules import map_renderer as mr
 from modules import playbook as pb
+from modules import sources
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 CONTEXT_MEMORY_PATH = DATA_DIR / "context_memory.json"
@@ -25,7 +29,6 @@ def init_session_state() -> None:
         "situation_board": [],
         "operation_log": [],
         "map_markers": [],
-        "map_pending_marker": None,
         "latency_history": [],
         "display_latency_history": [],
         "dropped_sources": [],
@@ -61,6 +64,42 @@ def apply_fast_result(result_data: dict, utterance: str = "") -> None:
     st.session_state.situation_type = resolved_name
     st.session_state.situation_reason = str(situation.get("reason", "") or "")
     st.session_state.situation_unmatched = raw_type if not matched else ""
+
+    icon_label = str((matched or {}).get("icon", "") or "").strip()
+    if icon_label:
+        _auto_place_marker(icon_label, utterance)
+
+
+def _auto_place_marker(icon_label: str, utterance: str) -> None:
+    """상황 유형에 연결된 프리셋 아이콘을, 발언에 언급된 시설 위치에 자동으로 놓는다.
+
+    같은 아이콘이 이미 떠 있으면 새로 만들지 않고 위치만 갱신한다 — 발언마다 같은
+    상황의 아이콘이 계속 쌓이지 않고, 하나의 아이콘이 최신 상황 위치로 옮겨가게
+    하기 위해서다. 발언에 시설명이 없으면 아무 것도 하지 않는다 — 모르는 위치를
+    지도에 억지로 찍지 않는다(map_renderer.py와 같은 원칙). 실무자는 '전장상황도
+    조작' 탭에서 이 자동 위치를 정밀하게 조정만 하면 된다.
+    """
+    preset = mi.find_preset(icon_label)
+    if not preset:
+        return
+    locations = sources.mentioned_locations(utterance)
+    if not locations:
+        return
+    pos = mr.facility_center(locations[0])
+    if not pos:
+        return
+
+    marker = {
+        "x": pos[0], "y": pos[1],
+        "emoji": preset["emoji"], "color": preset["color"], "label": preset["label"],
+        "facility": locations[0], "timestamp": time.strftime("%H:%M:%S"),
+    }
+    markers = st.session_state.map_markers
+    existing = next((m for m in markers if m.get("label") == preset["label"]), None)
+    if existing:
+        existing.update(marker)
+    else:
+        markers.append(marker)
 
 
 def apply_full_result(result_data: dict, speaker: str = "", timestamp: str = "") -> None:

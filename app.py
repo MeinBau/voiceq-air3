@@ -247,7 +247,7 @@ with st.sidebar:
             "context_memory_summary", "user_corrections", "utterance_log", "cop_layout",
             "situation_board", "operation_log", "latency_history",
             "display_latency_history", "dropped_sources",
-            "map_markers", "map_pending_marker", "_last_map_click",
+            "map_markers", "_last_map_click",
         ):
             st.session_state.pop(key, None)
         cm.init_session_state()
@@ -317,6 +317,10 @@ with tab_book:
         column_config={
             "상황 유형": st.column_config.TextColumn(width="medium"),
             "키워드": st.column_config.TextColumn(help="쉼표로 구분. 상황 분류의 단서로 쓰입니다."),
+            "아이콘": st.column_config.TextColumn(
+                help="이 상황으로 분류되면 전장상황도에 자동으로 띄울 프리셋 아이콘 이름"
+                "('전장상황도 조작' 탭에서 편집). 비워두면 아이콘을 띄우지 않습니다."
+            ),
         },
     )
 
@@ -389,11 +393,12 @@ with tab_memory:
 with tab_map_ops:
     st.subheader("전장상황도 실무자 조작")
     st.caption(
-        "드론·침입·주요 상황 아이콘을 지도 위에 직접 배치합니다. 배치를 확정하면 발언을 처리할 "
-        "때와 똑같은 경로(상황 분류 → COP 화면 구성 → 상황판 → 작전상황일지)를 그대로 거칩니다."
+        "드론·침입 등 아이콘은 발언을 처리하면 AI가 그 맥락(상황 분류 + 언급된 시설명)에 맞춰 "
+        "전장상황도에 자동으로 배치합니다. 실무자는 아래에서 아이콘을 골라 정확한 위치로 "
+        "미세 조정만 하면 됩니다 — 새 상황을 여기서 만들지는 않습니다."
     )
 
-    with st.expander("프리셋 아이콘 편집"):
+    with st.expander("프리셋 아이콘 편집 (어떤 상황에 어떤 아이콘을 쓸지는 COP 플레이북 탭에서 연결)"):
         edited_icons = st.data_editor(
             mi.to_table(), num_rows="dynamic", use_container_width=True, key="icon_editor"
         )
@@ -402,80 +407,53 @@ with tab_map_ops:
             st.success("프리셋을 저장했습니다.")
             st.rerun()
 
-    presets = mi.load_presets()
-    if not presets:
-        st.warning("등록된 프리셋 아이콘이 없습니다. 위 편집기에서 추가하세요.")
+    markers = st.session_state.map_markers
+    if not markers:
+        st.info(
+            "아직 자동으로 배치된 아이콘이 없습니다. 발언을 처리하면 상황 유형과 언급된 "
+            "시설명에 맞는 아이콘이 이 지도에 자동으로 나타납니다."
+        )
     else:
         col_map, col_side = st.columns([3, 2])
 
         with col_side:
-            map_speaker = st.selectbox("배치 화자", SPEAKERS, key="map_speaker")
-            if map_speaker == "직접입력":
-                map_speaker = st.text_input("화자명 직접 입력", value="", key="map_speaker_text")
-
-            preset_labels = [f"{p['emoji']} {p['label']}" for p in presets]
-            preset_idx = st.selectbox(
-                "배치할 아이콘", range(len(presets)),
-                format_func=lambda i: preset_labels[i], key="map_preset_idx",
+            marker_labels = [
+                f"{i + 1}. {m['emoji']} {m['label']} — {m['facility']} 인근"
+                for i, m in enumerate(markers)
+            ]
+            sel_idx = st.selectbox(
+                "위치를 조정할 아이콘", range(len(markers)),
+                format_func=lambda i: marker_labels[i], key="map_adjust_idx",
             )
-            selected_preset = presets[preset_idx]
+            st.caption("오른쪽 지도를 클릭하면 선택한 아이콘이 그 위치로 이동합니다.")
 
-            pending = st.session_state.map_pending_marker
-            if pending:
-                st.info(f"선택 위치 — 최근접 지점: **{pending['facility']}** 인근")
-                edited_text = st.text_area(
-                    "자동 생성된 발언 (필요하면 수정하세요)",
-                    value=pending["utterance"], key="map_pending_text",
+            st.divider()
+            st.caption("자동 배치된 아이콘 (지도 위 번호와 같습니다)")
+            for idx in reversed(range(len(markers))):
+                marker = markers[idx]
+                mc1, mc2 = st.columns([5, 1])
+                mc1.markdown(
+                    f"**{idx + 1}. {marker['emoji']} {marker['label']}** — "
+                    f"{marker['facility']} 인근 ({marker['timestamp']})"
                 )
-                c1, c2 = st.columns(2)
-                if c1.button("이 위치에 배치 확정", type="primary", use_container_width=True):
-                    placed_preset = presets[pending["preset_idx"]]
-                    with st.spinner("반영 중..."):
-                        run_utterance(map_speaker or "직접입력", edited_text.strip())
-                    st.session_state.map_markers.append({
-                        "x": pending["x"], "y": pending["y"],
-                        "emoji": placed_preset["emoji"], "color": placed_preset["color"],
-                        "label": placed_preset["label"], "facility": pending["facility"],
-                        "timestamp": time.strftime("%H:%M:%S"),
-                    })
-                    st.session_state.map_pending_marker = None
-                    st.success("배치를 반영했습니다. COP 화면 구성 탭에서 확인하세요.")
+                if mc2.button("삭제", key=f"del_marker_{idx}"):
+                    markers.pop(idx)
                     st.rerun()
-                if c2.button("취소", use_container_width=True):
-                    st.session_state.map_pending_marker = None
-                    st.rerun()
-            else:
-                st.caption("오른쪽 지도를 클릭해 배치할 위치를 지정하세요.")
-
-            if st.session_state.map_markers:
-                st.divider()
-                st.caption("배치된 아이콘 (지도 위 번호와 같습니다)")
-                for idx in reversed(range(len(st.session_state.map_markers))):
-                    marker = st.session_state.map_markers[idx]
-                    mc1, mc2 = st.columns([5, 1])
-                    mc1.markdown(
-                        f"**{idx + 1}. {marker['emoji']} {marker['label']}** — "
-                        f"{marker['facility']} 인근 ({marker['timestamp']})"
-                    )
-                    if mc2.button("삭제", key=f"del_marker_{idx}"):
-                        st.session_state.map_markers.pop(idx)
-                        st.rerun()
 
         with col_map:
-            picker_image = mr.render_picker_image(st.session_state.map_markers)
+            picker_image = mr.render_picker_image(markers)
             coords = streamlit_image_coordinates(picker_image, key="map_click_target")
             st.caption(
-                "격자 눈금(A~J, 1~7)만 표시되는 단순 배치판입니다 — 실제 명칭·표출은 "
+                "격자 눈금(A~J, 1~7)만 표시되는 단순 조정판입니다 — 실제 명칭·표출은 "
                 "왼쪽 안내와 COP 화면 구성 탭의 지도에서 확인하세요."
             )
             if coords and coords != st.session_state.get("_last_map_click"):
                 st.session_state._last_map_click = coords
-                facility = mr.nearest_facility_name(coords["x"], coords["y"])
-                utterance = mi.build_utterance(selected_preset, facility)
-                st.session_state.map_pending_marker = {
-                    "x": coords["x"], "y": coords["y"], "preset_idx": preset_idx,
-                    "facility": facility, "utterance": utterance,
-                }
+                markers[sel_idx]["x"] = coords["x"]
+                markers[sel_idx]["y"] = coords["y"]
+                markers[sel_idx]["facility"] = mr.nearest_facility_name(
+                    coords["x"], coords["y"]
+                )
                 st.rerun()
 
 st.divider()

@@ -139,6 +139,15 @@ def nearest_facility_name(x: float, y: float) -> str:
     return name
 
 
+def facility_center(name: str) -> tuple[float, float] | None:
+    """시설/초소/대공자산 이름 -> 지도 픽셀 좌표. 발언에 언급된 지명을 아이콘 자동
+    배치 위치로 바꿀 때 쓴다(context_memory._auto_place_marker)."""
+    for pname, x, y in _named_points():
+        if pname == name:
+            return (x, y)
+    return None
+
+
 def render_picker_image(markers: list[dict] | None = None):
     """수동 배치용 클릭 대상 래스터 이미지. 한글/이모지 폰트 의존 없이 격자·시설 윤곽·
     배치된 마커만 그린다 — 실제 이름/이모지는 Streamlit 쪽 텍스트로 보여준다."""
