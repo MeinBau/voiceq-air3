@@ -63,7 +63,11 @@ def _situation_board_body(situation_board: list[dict]) -> str:
     )
 
 
-def render_cop_wall(cop_layout: list[dict], situation_board: list[dict] | None = None) -> None:
+def render_cop_wall(
+    cop_layout: list[dict],
+    situation_board: list[dict] | None = None,
+    map_markers: list[dict] | None = None,
+) -> None:
     """2행 6열 Video Wall. 1순위는 좌측 2×2 대형 화면을 차지한다.
 
     전장 상황도는 별도 탭이 아니라 이 안에서 실제 SVG로 인라인 표출하며, 상황과
@@ -83,7 +87,9 @@ def render_cop_wall(cop_layout: list[dict], situation_board: list[dict] | None =
     panels = []
     for item in cop_layout[: pb.MAX_PANELS]:
         row, col, rspan, cspan = item.get("grid", (1, 1, 1, 1))
-        panels.append(_panel_html(item, row, col, rspan, cspan, cop_layout, situation_board))
+        panels.append(
+            _panel_html(item, row, col, rspan, cspan, cop_layout, situation_board, map_markers)
+        )
 
     st.markdown(
         f'<div style="display:grid; grid-template-columns:repeat({pb.GRID_COLS}, 1fr); '
@@ -102,6 +108,7 @@ def _panel_html(
     cspan: int,
     cop_layout: list[dict],
     situation_board: list[dict] | None = None,
+    map_markers: list[dict] | None = None,
 ) -> str:
     source_id = item.get("source_id", "")
     name = item.get("name", source_id)
@@ -123,7 +130,7 @@ def _panel_html(
         active = [x for x in cop_layout if x.get("source_id") not in MAP_SOURCES]
         body = (
             f'<div style="flex:1; padding:6px; overflow:hidden;">'
-            f"{mr.build_map_svg(active, compact=(cspan < 2))}</div>"
+            f"{mr.build_map_svg(active, compact=(cspan < 2), markers=map_markers)}</div>"
         )
         bg = "#0B0F14"
     elif is_board:

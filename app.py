@@ -8,9 +8,12 @@ import io
 import time
 
 import streamlit as st
+from streamlit_image_coordinates import streamlit_image_coordinates
 
 from modules import context_memory as cm
 from modules import layout_renderer as lr
+from modules import map_icons as mi
+from modules import map_renderer as mr
 from modules import organization as org
 from modules import playbook as pb
 from modules import prompts
@@ -244,6 +247,7 @@ with st.sidebar:
             "context_memory_summary", "user_corrections", "utterance_log", "cop_layout",
             "situation_board", "operation_log", "latency_history",
             "display_latency_history", "dropped_sources",
+            "map_markers", "map_pending_marker", "_last_map_click",
         ):
             st.session_state.pop(key, None)
         cm.init_session_state()
@@ -253,8 +257,8 @@ with st.sidebar:
 # ---------- 메인 화면 ----------
 st.title("전투지휘소 상황판 — VOICE-CUE")
 
-tab_wall, tab_book, tab_log, tab_memory = st.tabs(
-    ["COP 화면 구성", "COP 플레이북", "작전상황일지", "Context Memory / 발언 이력"]
+tab_wall, tab_book, tab_log, tab_memory, tab_map_ops = st.tabs(
+    ["COP 화면 구성", "COP 플레이북", "작전상황일지", "Context Memory / 발언 이력", "전장상황도 조작"]
 )
 
 with tab_wall:
@@ -269,7 +273,9 @@ with tab_wall:
                 "'기타 상황'으로 처리했습니다. 필요하면 플레이북 탭에서 추가하세요."
             )
 
-    lr.render_cop_wall(st.session_state.cop_layout, st.session_state.situation_board)
+    lr.render_cop_wall(
+        st.session_state.cop_layout, st.session_state.situation_board, st.session_state.map_markers
+    )
     st.caption(
         "1번 '비행단 전장상황도'는 항상 고정 표시됩니다. 지도 위 점은 지금 화면에 떠 있는 "
         "CCTV의 위치이며, 숫자는 해당 화면의 순번과 같습니다."
@@ -379,6 +385,98 @@ with tab_memory:
     st.subheader("비행단 편제")
     st.caption("화자의 직책·계급·담당분야가 AI 판단에 가중치로 반영됩니다.")
     st.code(org.org_tree_text(), language=None)
+
+with tab_map_ops:
+    st.subheader("전장상황도 실무자 조작")
+    st.caption(
+        "드론·침입·주요 상황 아이콘을 지도 위에 직접 배치합니다. 배치를 확정하면 발언을 처리할 "
+        "때와 똑같은 경로(상황 분류 → COP 화면 구성 → 상황판 → 작전상황일지)를 그대로 거칩니다."
+    )
+
+    with st.expander("프리셋 아이콘 편집"):
+        edited_icons = st.data_editor(
+            mi.to_table(), num_rows="dynamic", use_container_width=True, key="icon_editor"
+        )
+        if st.button("아이콘 저장", key="save_icons"):
+            mi.save_presets(mi.from_table(edited_icons))
+            st.success("프리셋을 저장했습니다.")
+            st.rerun()
+
+    presets = mi.load_presets()
+    if not presets:
+        st.warning("등록된 프리셋 아이콘이 없습니다. 위 편집기에서 추가하세요.")
+    else:
+        col_map, col_side = st.columns([3, 2])
+
+        with col_side:
+            map_speaker = st.selectbox("배치 화자", SPEAKERS, key="map_speaker")
+            if map_speaker == "직접입력":
+                map_speaker = st.text_input("화자명 직접 입력", value="", key="map_speaker_text")
+
+            preset_labels = [f"{p['emoji']} {p['label']}" for p in presets]
+            preset_idx = st.selectbox(
+                "배치할 아이콘", range(len(presets)),
+                format_func=lambda i: preset_labels[i], key="map_preset_idx",
+            )
+            selected_preset = presets[preset_idx]
+
+            pending = st.session_state.map_pending_marker
+            if pending:
+                st.info(f"선택 위치 — 최근접 지점: **{pending['facility']}** 인근")
+                edited_text = st.text_area(
+                    "자동 생성된 발언 (필요하면 수정하세요)",
+                    value=pending["utterance"], key="map_pending_text",
+                )
+                c1, c2 = st.columns(2)
+                if c1.button("이 위치에 배치 확정", type="primary", use_container_width=True):
+                    placed_preset = presets[pending["preset_idx"]]
+                    with st.spinner("반영 중..."):
+                        run_utterance(map_speaker or "직접입력", edited_text.strip())
+                    st.session_state.map_markers.append({
+                        "x": pending["x"], "y": pending["y"],
+                        "emoji": placed_preset["emoji"], "color": placed_preset["color"],
+                        "label": placed_preset["label"], "facility": pending["facility"],
+                        "timestamp": time.strftime("%H:%M:%S"),
+                    })
+                    st.session_state.map_pending_marker = None
+                    st.success("배치를 반영했습니다. COP 화면 구성 탭에서 확인하세요.")
+                    st.rerun()
+                if c2.button("취소", use_container_width=True):
+                    st.session_state.map_pending_marker = None
+                    st.rerun()
+            else:
+                st.caption("오른쪽 지도를 클릭해 배치할 위치를 지정하세요.")
+
+            if st.session_state.map_markers:
+                st.divider()
+                st.caption("배치된 아이콘 (지도 위 번호와 같습니다)")
+                for idx in reversed(range(len(st.session_state.map_markers))):
+                    marker = st.session_state.map_markers[idx]
+                    mc1, mc2 = st.columns([5, 1])
+                    mc1.markdown(
+                        f"**{idx + 1}. {marker['emoji']} {marker['label']}** — "
+                        f"{marker['facility']} 인근 ({marker['timestamp']})"
+                    )
+                    if mc2.button("삭제", key=f"del_marker_{idx}"):
+                        st.session_state.map_markers.pop(idx)
+                        st.rerun()
+
+        with col_map:
+            picker_image = mr.render_picker_image(st.session_state.map_markers)
+            coords = streamlit_image_coordinates(picker_image, key="map_click_target")
+            st.caption(
+                "격자 눈금(A~J, 1~7)만 표시되는 단순 배치판입니다 — 실제 명칭·표출은 "
+                "왼쪽 안내와 COP 화면 구성 탭의 지도에서 확인하세요."
+            )
+            if coords and coords != st.session_state.get("_last_map_click"):
+                st.session_state._last_map_click = coords
+                facility = mr.nearest_facility_name(coords["x"], coords["y"])
+                utterance = mi.build_utterance(selected_preset, facility)
+                st.session_state.map_pending_marker = {
+                    "x": coords["x"], "y": coords["y"], "preset_idx": preset_idx,
+                    "facility": facility, "utterance": utterance,
+                }
+                st.rerun()
 
 st.divider()
 st.caption(

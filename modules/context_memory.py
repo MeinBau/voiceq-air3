@@ -24,6 +24,8 @@ def init_session_state() -> None:
         "cop_layout": [],
         "situation_board": [],
         "operation_log": [],
+        "map_markers": [],
+        "map_pending_marker": None,
         "latency_history": [],
         "display_latency_history": [],
         "dropped_sources": [],

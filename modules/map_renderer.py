@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+from functools import lru_cache
 
 from modules import base_map as bm
 from modules import sources
@@ -98,13 +99,107 @@ def _active_camera_markers(active_sources: list[dict] | None) -> list[tuple[floa
     return markers
 
 
-def build_map_svg(active_sources: list[dict] | None = None, compact: bool = False) -> str:
+def _map_dimensions() -> tuple[int, int, int, int]:
+    """(전체 너비, 전체 높이, 열 개수, 행 개수). 래스터 피커 이미지도 이 좌표계를 그대로 쓴다."""
+    base = bm.load_base_map()
+    grid = base["base"]["grid"]
+    cols, rows = grid["cols"], grid["rows"]
+    W = MARGIN_LEFT + len(cols) * CELL + 12
+    H = MARGIN_TOP + rows * CELL + 12
+    return W, H, len(cols), rows
+
+
+@lru_cache(maxsize=1)
+def _named_points() -> list[tuple[str, float, float]]:
+    """시설·초소·대공자산의 (이름, x, y). 수동 배치 아이콘의 최근접 지명을 찾는 데 쓴다."""
+    base = bm.load_base_map()
+    points: list[tuple[str, float, float]] = []
+    for fac in base["facilities"]:
+        r = _rect_for(fac["cells"])
+        if r:
+            x, y, w, h = r
+            points.append((fac["name"], x + w / 2, y + h / 2))
+    for post in base["sentry_posts"]:
+        c = _center(post["cell"])
+        if c:
+            points.append((post["name"], c[0], c[1]))
+    for asset in base["air_defense"]:
+        c = _center(asset["cell"])
+        if c:
+            points.append((asset["name"], c[0], c[1]))
+    return points
+
+
+def nearest_facility_name(x: float, y: float) -> str:
+    """지도 위 임의의 픽셀 좌표에서 가장 가까운 시설/초소/대공자산 이름."""
+    points = _named_points()
+    if not points:
+        return "미상 위치"
+    name, _, _ = min(points, key=lambda p: (p[1] - x) ** 2 + (p[2] - y) ** 2)
+    return name
+
+
+def render_picker_image(markers: list[dict] | None = None):
+    """수동 배치용 클릭 대상 래스터 이미지. 한글/이모지 폰트 의존 없이 격자·시설 윤곽·
+    배치된 마커만 그린다 — 실제 이름/이모지는 Streamlit 쪽 텍스트로 보여준다."""
+    from PIL import Image, ImageDraw
+
+    W, H, ncols, nrows = _map_dimensions()
+    x0, y0 = MARGIN_LEFT, MARGIN_TOP
+    x1, y1 = MARGIN_LEFT + ncols * CELL, MARGIN_TOP + nrows * CELL
+
+    img = Image.new("RGB", (W, H), "#11160F")
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([x0, y0, x1, y1], fill="#1B2A1D", outline="#3A4A3C")
+
+    base = bm.load_base_map()
+    for fac in base["facilities"]:
+        r = _rect_for(fac["cells"])
+        if not r:
+            continue
+        fx, fy, fw, fh = r
+        draw.rectangle(
+            [fx + 6, fy + 6, fx + fw - 6, fy + fh - 6], fill="#33403A", outline="#57685C"
+        )
+
+    for c in range(ncols + 1):
+        x = x0 + c * CELL
+        draw.line([(x, y0), (x, y1)], fill="#3E5245", width=1)
+    for r_ in range(nrows + 1):
+        y = y0 + r_ * CELL
+        draw.line([(x0, y), (x1, y)], fill="#3E5245", width=1)
+
+    cols_letters = base["base"]["grid"]["cols"]
+    for c, label in enumerate(cols_letters):
+        draw.text((x0 + c * CELL + CELL / 2 - 4, y0 - 16), label, fill="#8FB6A0")
+    for r_ in range(nrows):
+        draw.text((x0 - 16, y0 + r_ * CELL + CELL / 2 - 6), str(r_ + 1), fill="#8FB6A0")
+
+    for i, marker in enumerate(markers or [], start=1):
+        mx, my = marker.get("x"), marker.get("y")
+        if mx is None or my is None:
+            continue
+        color = marker.get("color", "#E63946")
+        radius = 11
+        draw.ellipse(
+            [mx - radius, my - radius, mx + radius, my + radius],
+            fill=color, outline="#0D1210", width=2,
+        )
+        draw.text((mx - 3, my - 6), str(i), fill="#0D1210")
+
+    return img
+
+
+def build_map_svg(
+    active_sources: list[dict] | None = None,
+    compact: bool = False,
+    markers: list[dict] | None = None,
+) -> str:
+    W, H, _, _ = _map_dimensions()
     base = bm.load_base_map()
     grid = base["base"]["grid"]
     cols, rows = grid["cols"], grid["rows"]
 
-    W = MARGIN_LEFT + len(cols) * CELL + 12
-    H = MARGIN_TOP + rows * CELL + 12
     x0, y0 = MARGIN_LEFT, MARGIN_TOP
     x1, y1 = MARGIN_LEFT + len(cols) * CELL, MARGIN_TOP + rows * CELL
 
@@ -312,6 +407,21 @@ def build_map_svg(active_sources: list[dict] | None = None, compact: bool = Fals
                 f'<text x="{x}" y="{y + 3.5}" fill="#0D1210" font-size="8" font-weight="800" '
                 f'text-anchor="middle" font-family="sans-serif">{_esc(label)}</text>'
             )
+
+    # --- 실무자가 수동 배치한 아이콘 ---
+    for marker in (markers or []):
+        mx, my = marker.get("x"), marker.get("y")
+        if mx is None or my is None:
+            continue
+        color = marker.get("color", "#E63946")
+        p.append(
+            f'<circle cx="{mx}" cy="{my}" r="13" fill="{color}" fill-opacity="0.25" '
+            f'stroke="{color}" stroke-width="1.6"/>'
+        )
+        p.append(
+            f'<text x="{mx}" y="{my + 6}" font-size="18" '
+            f'text-anchor="middle">{_esc(marker.get("emoji", "📍"))}</text>'
+        )
 
     p.append("</svg>")
     return "".join(p)
