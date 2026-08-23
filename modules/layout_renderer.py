@@ -28,6 +28,39 @@ def _color_for(name: str) -> str:
 
 MAP_SOURCES = ("SYS-BASEMAP",)
 
+_URGENCY_COLOR = {"긴급": "#8A3033", "주의": "#B8860B", "관찰": "#3D5A80"}
+
+
+def render_situation_board(situation_board: list[dict]) -> None:
+    """situation_board(사태 우선순위 판단 목록)를 rank 순으로 "N순위" 카드로 표시한다."""
+    st.subheader("작전상황판 — 우선순위")
+
+    if not situation_board:
+        st.info("아직 판단된 사태가 없습니다. 발언을 입력하면 우선순위가 산출됩니다.")
+        return
+
+    cards = []
+    for item in situation_board:
+        rank = item.get("rank", "-")
+        event = _esc(item.get("event", ""))
+        urgency = str(item.get("urgency", "") or "")
+        color = _URGENCY_COLOR.get(urgency, "#3D5A80")
+        cards.append(
+            f'<div style="flex:1; min-width:180px; background:rgba(255,255,255,0.04); '
+            f'border:1px solid rgba(255,255,255,0.12); border-left:4px solid {color}; '
+            f'border-radius:6px; padding:10px 12px;">'
+            f'<div style="font-size:0.72rem; opacity:0.6;">{_esc(rank)}순위</div>'
+            f'<div style="font-weight:700; margin:2px 0 6px;">{event}</div>'
+            f'<span style="font-size:0.68rem; padding:2px 8px; border-radius:10px; '
+            f'background:{color};">{_esc(urgency)}</span></div>'
+        )
+
+    st.markdown(
+        '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">'
+        + "".join(cards) + "</div>",
+        unsafe_allow_html=True,
+    )
+
 
 def render_cop_wall(cop_layout: list[dict]) -> None:
     """2행 6열 Video Wall. 1순위는 좌측 2×2 대형 화면을 차지한다.
