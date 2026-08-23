@@ -269,8 +269,7 @@ with tab_wall:
                 "'기타 상황'으로 처리했습니다. 필요하면 플레이북 탭에서 추가하세요."
             )
 
-    lr.render_situation_board(st.session_state.situation_board)
-    lr.render_cop_wall(st.session_state.cop_layout)
+    lr.render_cop_wall(st.session_state.cop_layout, st.session_state.situation_board)
     st.caption(
         "1번 '비행단 전장상황도'는 항상 고정 표시됩니다. 지도 위 점은 지금 화면에 떠 있는 "
         "CCTV의 위치이며, 숫자는 해당 화면의 순번과 같습니다."

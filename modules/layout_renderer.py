@@ -27,17 +27,19 @@ def _color_for(name: str) -> str:
 
 
 MAP_SOURCES = ("SYS-BASEMAP",)
+SITBOARD_SOURCE_ID = "SYS-SITBOARD"
 
 _URGENCY_COLOR = {"긴급": "#8A3033", "주의": "#B8860B", "관찰": "#3D5A80"}
 
 
-def render_situation_board(situation_board: list[dict]) -> None:
-    """situation_board(사태 우선순위 판단 목록)를 rank 순으로 "N순위" 카드로 표시한다."""
-    st.subheader("작전상황판 — 우선순위")
-
+def _situation_board_body(situation_board: list[dict]) -> str:
+    """situation_board(사태 우선순위 목록)를 SYS-SITBOARD 타일 안에 "N순위" 카드로 쌓는다."""
     if not situation_board:
-        st.info("아직 판단된 사태가 없습니다. 발언을 입력하면 우선순위가 산출됩니다.")
-        return
+        return (
+            '<div style="flex:1; display:flex; align-items:center; justify-content:center; '
+            'padding:8px; text-align:center; font-size:0.7rem; opacity:0.5;">'
+            "아직 판단된 사태가 없습니다.</div>"
+        )
 
     cards = []
     for item in situation_board:
@@ -46,28 +48,31 @@ def render_situation_board(situation_board: list[dict]) -> None:
         urgency = str(item.get("urgency", "") or "")
         color = _URGENCY_COLOR.get(urgency, "#3D5A80")
         cards.append(
-            f'<div style="flex:1; min-width:180px; background:rgba(255,255,255,0.04); '
-            f'border:1px solid rgba(255,255,255,0.12); border-left:4px solid {color}; '
-            f'border-radius:6px; padding:10px 12px;">'
-            f'<div style="font-size:0.72rem; opacity:0.6;">{_esc(rank)}순위</div>'
-            f'<div style="font-weight:700; margin:2px 0 6px;">{event}</div>'
-            f'<span style="font-size:0.68rem; padding:2px 8px; border-radius:10px; '
-            f'background:{color};">{_esc(urgency)}</span></div>'
+            f'<div style="background:rgba(255,255,255,0.05); border-left:3px solid {color}; '
+            f'border-radius:4px; padding:5px 7px;">'
+            f'<div style="font-size:0.62rem; opacity:0.65;">{_esc(rank)}순위 '
+            f'<span style="padding:1px 6px; border-radius:8px; background:{color}; '
+            f'margin-left:4px;">{_esc(urgency)}</span></div>'
+            f'<div style="font-size:0.74rem; font-weight:700; margin-top:2px;">{event}</div>'
+            "</div>"
         )
 
-    st.markdown(
-        '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">'
-        + "".join(cards) + "</div>",
-        unsafe_allow_html=True,
+    return (
+        '<div style="flex:1; display:flex; flex-direction:column; gap:5px; padding:7px; '
+        'overflow:auto;">' + "".join(cards) + "</div>"
     )
 
 
-def render_cop_wall(cop_layout: list[dict]) -> None:
+def render_cop_wall(cop_layout: list[dict], situation_board: list[dict] | None = None) -> None:
     """2행 6열 Video Wall. 1순위는 좌측 2×2 대형 화면을 차지한다.
 
     전장 상황도는 별도 탭이 아니라 이 안에서 실제 SVG로 인라인 표출하며, 상황과
     무관하게 항상 1순위 자리에 고정된다. 지도 위에는 지금 화면에 떠 있는 CCTV의
     위치만 표시한다 — 지휘소 대형 화면을 그대로 옮겨온 모습이어야 하기 때문이다.
+
+    "작전상황판"(SYS-SITBOARD) 타일이 플레이북에 의해 화면에 뜨면, 그 타일
+    안에는 회색 플레이스홀더 대신 situation_board(우선순위 판단 목록)를
+    "N순위" 카드로 직접 그려 넣는다.
     """
     st.subheader("COP 화면 구성 — Video Wall 2×6")
 
@@ -78,7 +83,7 @@ def render_cop_wall(cop_layout: list[dict]) -> None:
     panels = []
     for item in cop_layout[: pb.MAX_PANELS]:
         row, col, rspan, cspan = item.get("grid", (1, 1, 1, 1))
-        panels.append(_panel_html(item, row, col, rspan, cspan, cop_layout))
+        panels.append(_panel_html(item, row, col, rspan, cspan, cop_layout, situation_board))
 
     st.markdown(
         f'<div style="display:grid; grid-template-columns:repeat({pb.GRID_COLS}, 1fr); '
@@ -90,13 +95,20 @@ def render_cop_wall(cop_layout: list[dict]) -> None:
 
 
 def _panel_html(
-    item: dict, row: int, col: int, rspan: int, cspan: int, cop_layout: list[dict]
+    item: dict,
+    row: int,
+    col: int,
+    rspan: int,
+    cspan: int,
+    cop_layout: list[dict],
+    situation_board: list[dict] | None = None,
 ) -> str:
     source_id = item.get("source_id", "")
     name = item.get("name", source_id)
     priority = item.get("priority", "-")
     slot = item.get("slot", "")
     is_map = source_id in MAP_SOURCES
+    is_board = source_id == SITBOARD_SOURCE_ID
 
     header = (
         f'<div style="display:flex; justify-content:space-between; align-items:center; '
@@ -113,6 +125,9 @@ def _panel_html(
             f'<div style="flex:1; padding:6px; overflow:hidden;">'
             f"{mr.build_map_svg(active, compact=(cspan < 2))}</div>"
         )
+        bg = "#0B0F14"
+    elif is_board:
+        body = _situation_board_body(situation_board or [])
         bg = "#0B0F14"
     else:
         color = _color_for(source_id)
