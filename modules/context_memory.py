@@ -130,39 +130,44 @@ def _normalize_event_id(raw: object) -> str:
 
 
 def _merge_operation_log_entry(entry: dict, speaker: str, timestamp: str) -> None:
-    """LLM이 낸 일지 항목을 기존 사태에 병합하거나, 없으면 새 사태로 추가한다.
+    """LLM의 3분류 결과(kind: 상황/조치/무시)를 작전상황일지에 반영한다.
 
-    event_id가 이미 존재하는 사태와 일치하면 그 사태의 타임라인에 이어 붙인다.
+    - 상황: 새 사태를 만든다. 발화 시간이 그 사태의 '시간' 칸이 된다.
+    - 조치: event_id로 지목한 기존 사태의 타임라인에 이어 붙인다. 화자의 부서가
+      '부서' 칸에, content가 '조치내용' 칸에 들어간다.
+    - 무시(또는 알 수 없는 값): 일지를 건드리지 않는다.
     발언 하나가 곧 사태 하나가 되지 않도록 하는 것이 이 함수의 핵심이다.
     """
-    event_id = _normalize_event_id(entry.get("event_id", ""))
-    title = str(entry.get("title", "") or "").strip()
-    detail = str(entry.get("detail", "") or "").strip()
-
-    # 특기할 내용이 없는 단순 잡담은 일지에 기록하지 않는다.
-    if not detail and not title:
+    kind = str(entry.get("kind", "") or "").strip()
+    content = str(entry.get("content", "") or "").strip()
+    if kind not in ("상황", "조치") or not content:
         return
 
     log = st.session_state.operation_log
-    existing = next((e for e in log if e.get("event_id") == event_id), None) if event_id else None
+    event_id = _normalize_event_id(entry.get("event_id", ""))
 
-    if existing is not None:
-        if detail:
+    if kind == "조치":
+        existing = next((e for e in log if e.get("event_id") == event_id), None) if event_id else None
+        if existing is not None:
             existing["entries"].append(
-                {"timestamp": timestamp, "speaker": speaker, "detail": detail}
+                {"timestamp": timestamp, "speaker": speaker, "detail": content}
             )
-        # 상황이 전개되면 모델이 제목을 갱신할 수 있다. 빈 문자열이면 기존 제목을 유지한다.
-        if title:
-            existing["title"] = title
-        return
+            return
+        # 대상 사태를 못 찾았다 — 모델이 ID를 잘못 지목한 경우다. 조치 내용을 잃지
+        # 않도록 새 사태로라도 남긴다.
+
+    # kind == "상황"이거나, "조치"인데 대상을 못 찾은 경우: 새 사태로 기록한다.
+    # 모델이 이미 쓰인 ID를 새 상황에 재사용하면 기존 사태를 덮어써 버리므로,
+    # 그런 경우엔 다음 번호로 새로 발급한다.
+    existing_ids = {e.get("event_id") for e in log}
+    if not event_id or event_id in existing_ids:
+        event_id = f"사태{len(log) + 1}"
 
     log.append(
         {
-            "event_id": event_id or f"사태{len(log) + 1}",
-            "title": title or detail,
-            "entries": (
-                [{"timestamp": timestamp, "speaker": speaker, "detail": detail}] if detail else []
-            ),
+            "event_id": event_id,
+            "title": content,
+            "entries": [{"timestamp": timestamp, "speaker": speaker, "detail": content}],
         }
     )
 
