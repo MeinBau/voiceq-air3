@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from modules import map_icons, sources
+from modules import sources
 
 PLAYBOOK_PATH = Path(__file__).resolve().parent.parent / "data" / "cop_playbook.json"
 
@@ -355,7 +355,6 @@ def to_table() -> list[dict]:
         row = {
             "상황 유형": situation["name"],
             "키워드": ", ".join(situation.get("keywords", [])),
-            "아이콘": situation.get("icon", ""),
         }
         for i in range(5):
             screens = situation.get("screens", [])
@@ -379,19 +378,15 @@ def from_table(rows: list[dict]) -> dict:
         keywords = [
             k.strip() for k in str(row.get("키워드", "") or "").split(",") if k.strip()
         ]
-        icon = str(row.get("아이콘", "") or "").strip()
-        situation = {"name": name, "keywords": keywords, "screens": [s for s in screens if s]}
-        if icon:
-            situation["icon"] = icon
-        situations.append(situation)
+        situations.append(
+            {"name": name, "keywords": keywords, "screens": [s for s in screens if s]}
+        )
     data["situations"] = situations
     return data
 
 
 def validate_table(rows: list[dict]) -> list[str]:
-    """저장 전 점검. 해석할 수 없는 슬롯 이름·아이콘을 알려준다."""
-    known_icons = {p["label"] for p in map_icons.load_presets()}
-
+    """저장 전 점검. 해석할 수 없는 슬롯 이름을 알려준다."""
     problems = []
     for row in rows:
         name = str(row.get("상황 유형", "") or "").strip()
@@ -401,7 +396,4 @@ def validate_table(rows: list[dict]) -> list[str]:
             slot = str(row.get(f"{i + 1}순위", "") or "").strip()
             if slot and not resolve_slot(slot, ""):
                 problems.append(f"'{name}' {i + 1}순위 — 알 수 없는 화면: {slot}")
-        icon = str(row.get("아이콘", "") or "").strip()
-        if icon and icon not in known_icons:
-            problems.append(f"'{name}' 아이콘 — 알 수 없는 프리셋: {icon}")
     return problems

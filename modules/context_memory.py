@@ -65,51 +65,83 @@ def apply_fast_result(result_data: dict, utterance: str = "") -> None:
     st.session_state.situation_reason = str(situation.get("reason", "") or "")
     st.session_state.situation_unmatched = raw_type if not matched else ""
 
-    icon_label = str((matched or {}).get("icon", "") or "").strip()
-    if icon_label:
-        _auto_place_marker(icon_label, utterance)
 
-
-def _auto_place_marker(icon_label: str, utterance: str) -> None:
-    """상황 유형에 연결된 프리셋 아이콘을, 발언에 언급된 시설 위치에 자동으로 놓는다.
-
-    같은 아이콘이 이미 떠 있으면 새로 만들지 않고 위치만 갱신한다 — 발언마다 같은
-    상황의 아이콘이 계속 쌓이지 않고, 하나의 아이콘이 최신 상황 위치로 옮겨가게
-    하기 위해서다. 발언에 시설명이 없으면 아무 것도 하지 않는다 — 모르는 위치를
-    지도에 억지로 찍지 않는다(map_renderer.py와 같은 원칙). 실무자는 '전장상황도
-    조작' 탭에서 이 자동 위치를 정밀하게 조정만 하면 된다.
+def _resolve_location(utterance: str) -> tuple[tuple[float, float] | None, str]:
+    """발언에서 지도 위치를 찾는다. 시설명이 언급됐으면 그 시설, 없으면 언급된
+    방위를 담당하는 경계초소 위치를 근사치로 쓴다. 둘 다 없으면 (None, "") —
+    모르는 위치를 지도에 억지로 찍지 않는다(map_renderer.py와 같은 원칙).
     """
-    preset = mi.find_preset(icon_label)
-    if not preset:
-        return
     locations = sources.mentioned_locations(utterance)
-    if not locations:
-        return
-    pos = mr.facility_center(locations[0])
-    if not pos:
+    if locations:
+        pos = mr.facility_center(locations[0])
+        if pos:
+            return pos, locations[0]
+
+    for direction in sources.mentioned_directions(utterance):
+        anchor = mr.direction_anchor(direction)
+        if anchor:
+            name, x, y = anchor
+            return (x, y), name
+
+    return None, ""
+
+
+def _auto_place_markers(event_id: str, utterance: str) -> None:
+    """발언 텍스트에 프리셋 키워드가 들어 있으면 해당 아이콘을 자동으로 놓거나 옮긴다.
+
+    마커는 (사태 event_id, 프리셋 이름) 조합으로 구분한다. event_id로 구분하지
+    않고 프리셋 이름만으로 구분하면, 같은 종류의 사태가 동시에 둘 이상
+    진행 중일 때(예: 동쪽 무인기 3대·서쪽 무인기 2대) 하나로 뭉개져 버린다.
+    한 사태 안에서도 대상(무인기)과 대응 자산(전술차량)처럼 서로 다른 프리셋이
+    동시에 걸릴 수 있으므로 그 조합은 각자 별도 마커로 둔다.
+    같은 (사태, 프리셋) 마커가 이미 떠 있으면 새로 만들지 않고 위치만 갱신한다
+    — 그 사태가 전개되며 위치가 바뀌면(예: "무인기가 격납고로 이동") 새로
+    쌓이지 않고 하나의 아이콘이 최신 위치로 옮겨가게 하기 위해서다.
+    실무자는 '전장상황도 조작' 탭에서 이 자동 위치를 정밀하게 조정만 하면 된다.
+    """
+    if not event_id:
         return
 
-    marker = {
-        "x": pos[0], "y": pos[1],
-        "emoji": preset["emoji"], "color": preset["color"], "label": preset["label"],
-        "facility": locations[0], "timestamp": time.strftime("%H:%M:%S"),
-    }
+    matched_presets = [p for p in mi.load_presets() if mi.matches(p, utterance)]
+    if not matched_presets:
+        return
+
+    pos, facility = _resolve_location(utterance)
+    if pos is None:
+        return
+
     markers = st.session_state.map_markers
-    existing = next((m for m in markers if m.get("label") == preset["label"]), None)
-    if existing:
-        existing.update(marker)
-    else:
-        markers.append(marker)
+    for preset in matched_presets:
+        marker = {
+            "event_id": event_id, "x": pos[0], "y": pos[1],
+            "emoji": preset["emoji"], "color": preset["color"], "label": preset["label"],
+            "facility": facility, "timestamp": time.strftime("%H:%M:%S"),
+        }
+        existing = next(
+            (m for m in markers
+             if m.get("event_id") == event_id and m.get("label") == preset["label"]),
+            None,
+        )
+        if existing:
+            existing.update(marker)
+        else:
+            markers.append(marker)
 
 
-def apply_full_result(result_data: dict, speaker: str = "", timestamp: str = "") -> None:
-    """기록 경로 결과 — 누적 요약, 상황판, 작전상황일지를 갱신한다."""
+def apply_full_result(
+    result_data: dict, speaker: str = "", timestamp: str = "", utterance: str = ""
+) -> None:
+    """기록 경로 결과 — 누적 요약, 상황판, 작전상황일지, 전장상황도 아이콘을 갱신한다."""
     st.session_state.context_memory_summary = result_data.get("context_memory", "")
     st.session_state.situation_board = sorted(
         result_data.get("situation_board", []), key=lambda x: x.get("rank", 99)
     )
 
-    _merge_operation_log_entry(result_data.get("operation_log_entry") or {}, speaker, timestamp)
+    event_id = _merge_operation_log_entry(
+        result_data.get("operation_log_entry") or {}, speaker, timestamp
+    )
+    if event_id:
+        _auto_place_markers(event_id, utterance)
 
 
 _EVENT_ID_RE = re.compile(r"^(?:사태|사건|상황|이벤트|event)\s*[-_]?\s*(\d+)$", re.IGNORECASE)
@@ -129,7 +161,7 @@ def _normalize_event_id(raw: object) -> str:
     return f"사태{int(match.group(1))}" if match else text
 
 
-def _merge_operation_log_entry(entry: dict, speaker: str, timestamp: str) -> None:
+def _merge_operation_log_entry(entry: dict, speaker: str, timestamp: str) -> str | None:
     """LLM의 3분류 결과(kind: 상황/조치/무시)를 작전상황일지에 반영한다.
 
     - 상황: 새 사태를 만든다. 발화 시간이 그 사태의 '시간' 칸이 된다.
@@ -137,11 +169,16 @@ def _merge_operation_log_entry(entry: dict, speaker: str, timestamp: str) -> Non
       '부서' 칸에, content가 '조치내용' 칸에 들어간다.
     - 무시(또는 알 수 없는 값): 일지를 건드리지 않는다.
     발언 하나가 곧 사태 하나가 되지 않도록 하는 것이 이 함수의 핵심이다.
+
+    반환값은 실제로 기록에 쓰인 event_id다(모델이 지목한 ID가 아니라, 못 찾아서
+    새로 발급했거나 재사용을 막고 새로 발급한 경우의 최종 ID). 전장상황도 아이콘
+    자동 배치(_auto_place_markers)가 이 값으로 마커를 사태와 묶는다. 무시했거나
+    내용이 없으면 None — 이때는 지도도 건드리지 않는다.
     """
     kind = str(entry.get("kind", "") or "").strip()
     content = str(entry.get("content", "") or "").strip()
     if kind not in ("상황", "조치") or not content:
-        return
+        return None
 
     log = st.session_state.operation_log
     event_id = _normalize_event_id(entry.get("event_id", ""))
@@ -152,7 +189,7 @@ def _merge_operation_log_entry(entry: dict, speaker: str, timestamp: str) -> Non
             existing["entries"].append(
                 {"timestamp": timestamp, "speaker": speaker, "detail": content}
             )
-            return
+            return event_id
         # 대상 사태를 못 찾았다 — 모델이 ID를 잘못 지목한 경우다. 조치 내용을 잃지
         # 않도록 새 사태로라도 남긴다.
 
@@ -170,6 +207,7 @@ def _merge_operation_log_entry(entry: dict, speaker: str, timestamp: str) -> Non
             "entries": [{"timestamp": timestamp, "speaker": speaker, "detail": content}],
         }
     )
+    return event_id
 
 
 def add_manual_correction(correction_text: str) -> None:

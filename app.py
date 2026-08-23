@@ -115,7 +115,7 @@ def run_utterance(speaker: str, utterance: str) -> None:
         cm.apply_fast_result(result.fast.data, utterance)
         st.session_state.display_latency_history.append(result.display_latency)
     if result.full:
-        cm.apply_full_result(result.full.data, speaker=speaker, timestamp=timestamp)
+        cm.apply_full_result(result.full.data, speaker=speaker, timestamp=timestamp, utterance=utterance)
 
     for message in result.errors:
         st.warning(message)
@@ -317,10 +317,6 @@ with tab_book:
         column_config={
             "상황 유형": st.column_config.TextColumn(width="medium"),
             "키워드": st.column_config.TextColumn(help="쉼표로 구분. 상황 분류의 단서로 쓰입니다."),
-            "아이콘": st.column_config.TextColumn(
-                help="이 상황으로 분류되면 전장상황도에 자동으로 띄울 프리셋 아이콘 이름"
-                "('전장상황도 조작' 탭에서 편집). 비워두면 아이콘을 띄우지 않습니다."
-            ),
         },
     )
 
@@ -393,14 +389,23 @@ with tab_memory:
 with tab_map_ops:
     st.subheader("전장상황도 실무자 조작")
     st.caption(
-        "드론·침입 등 아이콘은 발언을 처리하면 AI가 그 맥락(상황 분류 + 언급된 시설명)에 맞춰 "
-        "전장상황도에 자동으로 배치합니다. 실무자는 아래에서 아이콘을 골라 정확한 위치로 "
-        "미세 조정만 하면 됩니다 — 새 상황을 여기서 만들지는 않습니다."
+        "발언에 프리셋 키워드(예: 무인기, 전술차량, 침투)가 들어 있으면 AI가 언급된 시설명·"
+        "방위로 위치를 잡아 전장상황도에 자동으로 아이콘을 배치합니다. 한 발언에 여러 아이콘이 "
+        "동시에 뜰 수 있습니다. 실무자는 아래에서 아이콘을 골라 정확한 위치로 미세 조정만 "
+        "하면 됩니다 — 새 상황을 여기서 만들지는 않습니다."
     )
 
-    with st.expander("프리셋 아이콘 편집 (어떤 상황에 어떤 아이콘을 쓸지는 COP 플레이북 탭에서 연결)"):
+    with st.expander("프리셋 아이콘 편집 (키워드가 발언에 하나라도 들어가면 자동 배치됩니다)"):
         edited_icons = st.data_editor(
-            mi.to_table(), num_rows="dynamic", use_container_width=True, key="icon_editor"
+            mi.to_table(),
+            num_rows="dynamic",
+            use_container_width=True,
+            key="icon_editor",
+            column_config={
+                "키워드": st.column_config.TextColumn(
+                    help="쉼표로 구분. 발언에 이 중 하나라도 들어 있으면 이 아이콘을 자동 배치합니다."
+                ),
+            },
         )
         if st.button("아이콘 저장", key="save_icons"):
             mi.save_presets(mi.from_table(edited_icons))
@@ -410,8 +415,8 @@ with tab_map_ops:
     markers = st.session_state.map_markers
     if not markers:
         st.info(
-            "아직 자동으로 배치된 아이콘이 없습니다. 발언을 처리하면 상황 유형과 언급된 "
-            "시설명에 맞는 아이콘이 이 지도에 자동으로 나타납니다."
+            "아직 자동으로 배치된 아이콘이 없습니다. 발언에 프리셋 키워드와 위치(시설명 또는 "
+            "방위)가 함께 들어 있으면 이 지도에 자동으로 나타납니다."
         )
     else:
         col_map, col_side = st.columns([3, 2])

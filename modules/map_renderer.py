@@ -141,11 +141,34 @@ def nearest_facility_name(x: float, y: float) -> str:
 
 def facility_center(name: str) -> tuple[float, float] | None:
     """시설/초소/대공자산 이름 -> 지도 픽셀 좌표. 발언에 언급된 지명을 아이콘 자동
-    배치 위치로 바꿀 때 쓴다(context_memory._auto_place_marker)."""
+    배치 위치로 바꿀 때 쓴다(context_memory._auto_place_markers)."""
     for pname, x, y in _named_points():
         if pname == name:
             return (x, y)
     return None
+
+
+@lru_cache(maxsize=1)
+def _direction_anchors() -> dict[str, tuple[str, float, float]]:
+    """방위(북/남/동/서/북서 등) -> 그 구역을 담당하는 경계초소의 (이름, x, y).
+
+    발언이 "기지 동쪽에서 무인기 식별"처럼 시설명 없이 방위만 말하는 경우가
+    많다. 정확한 지점을 모르는데 억지로 찍을 수는 없으니, 그 방위를 담당하는
+    경계초소(base_map.json sentry_posts[].sector) 위치를 근사치로 쓴다.
+    """
+    base = bm.load_base_map()
+    anchors: dict[str, tuple[str, float, float]] = {}
+    for post in base["sentry_posts"]:
+        sector = post.get("sector", "")
+        c = _center(post["cell"])
+        if sector and c:
+            anchors[sector] = (post["name"], c[0], c[1])
+    return anchors
+
+
+def direction_anchor(direction: str) -> tuple[str, float, float] | None:
+    """방위 -> (경계초소 이름, x, y). 해당 방위를 담당하는 초소가 없으면 None."""
+    return _direction_anchors().get(direction)
 
 
 def render_picker_image(markers: list[dict] | None = None):
