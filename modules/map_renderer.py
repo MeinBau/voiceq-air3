@@ -222,6 +222,34 @@ def render_picker_image(markers: list[dict] | None = None):
     return img
 
 
+# "🛸"(UFO 이모지)는 무인기 프리셋의 기본 이모지지만 실제 쿼드콥터 모양과는 거리가
+# 멀다. 이 이모지가 지정된 마커만 실제 드론처럼 보이는 벡터 아이콘으로 그린다.
+DRONE_EMOJI = "🛸"
+
+
+def _drone_icon_svg(x: float, y: float, color: str) -> str:
+    """쿼드콥터 실루엣(중심 동체 + 4개 암/로터). 이모지 폰트에 기대지 않는다."""
+    arm = 9.5
+    rotor_r = 3.3
+    parts = []
+    for dx, dy in ((-arm, -arm), (arm, -arm), (-arm, arm), (arm, arm)):
+        rx, ry = x + dx, y + dy
+        parts.append(
+            f'<line x1="{x}" y1="{y}" x2="{rx}" y2="{ry}" stroke="{color}" '
+            f'stroke-width="1.6" stroke-linecap="round"/>'
+        )
+        parts.append(
+            f'<circle cx="{rx}" cy="{ry}" r="{rotor_r}" fill="none" '
+            f'stroke="{color}" stroke-width="1.5"/>'
+        )
+        parts.append(f'<circle cx="{rx}" cy="{ry}" r="1" fill="{color}"/>')
+    parts.append(
+        f'<rect x="{x - 4.5}" y="{y - 3.2}" width="9" height="6.4" rx="2" '
+        f'fill="{color}" stroke="#0D1210" stroke-width="1"/>'
+    )
+    return "".join(parts)
+
+
 def build_map_svg(
     active_sources: list[dict] | None = None,
     compact: bool = False,
@@ -450,10 +478,13 @@ def build_map_svg(
             f'<circle cx="{mx}" cy="{my}" r="13" fill="{color}" fill-opacity="0.25" '
             f'stroke="{color}" stroke-width="1.6"/>'
         )
-        p.append(
-            f'<text x="{mx}" y="{my + 6}" font-size="18" '
-            f'text-anchor="middle">{_esc(marker.get("emoji", "📍"))}</text>'
-        )
+        if marker.get("emoji") == DRONE_EMOJI:
+            p.append(_drone_icon_svg(mx, my, color))
+        else:
+            p.append(
+                f'<text x="{mx}" y="{my + 6}" font-size="18" '
+                f'text-anchor="middle">{_esc(marker.get("emoji", "📍"))}</text>'
+            )
 
     p.append("</svg>")
     return "".join(p)

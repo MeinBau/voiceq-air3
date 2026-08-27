@@ -278,7 +278,9 @@ with tab_wall:
     )
     st.caption(
         "1번 '비행단 전장상황도'는 항상 고정 표시됩니다. 지도 위 점은 지금 화면에 떠 있는 "
-        "CCTV의 위치이며, 숫자는 해당 화면의 순번과 같습니다."
+        "CCTV의 위치이며, 숫자는 해당 화면의 순번과 같습니다. 무인기·차량 등 발언에서 "
+        "언급된 위치는 이모지 아이콘으로 같은 지도에 함께 표시되며, '전장상황도 조작' "
+        "탭에서 위치를 미세 조정할 수 있습니다."
     )
 
     if st.session_state.dropped_sources:
@@ -447,18 +449,26 @@ with tab_map_ops:
 
         with col_map:
             picker_image = mr.render_picker_image(markers)
-            coords = streamlit_image_coordinates(picker_image, key="map_click_target")
+            # width="stretch"로 컬럼 폭에 맞춰 축소 표시한다 — 원본 폭(822px)을 그대로
+            # 쓰면 좁은 컬럼에서 이미지가 잘려 오른쪽 격자(I~J)가 안 보였다. 축소해도
+            # 컴포넌트가 클릭 시점의 실제 표시 크기(coords["width"/"height"])를 함께
+            # 돌려주므로, 그 비율로 원본 픽셀 좌표로 환산하면 지도 좌표계는 그대로 맞는다.
+            coords = streamlit_image_coordinates(
+                picker_image, key="map_click_target", width="stretch"
+            )
             st.caption(
                 "격자 눈금(A~J, 1~7)만 표시되는 단순 조정판입니다 — 실제 명칭·표출은 "
                 "왼쪽 안내와 COP 화면 구성 탭의 지도에서 확인하세요."
             )
             if coords and coords != st.session_state.get("_last_map_click"):
                 st.session_state._last_map_click = coords
-                markers[sel_idx]["x"] = coords["x"]
-                markers[sel_idx]["y"] = coords["y"]
-                markers[sel_idx]["facility"] = mr.nearest_facility_name(
-                    coords["x"], coords["y"]
-                )
+                scale_x = picker_image.width / coords["width"]
+                scale_y = picker_image.height / coords["height"]
+                real_x = coords["x"] * scale_x
+                real_y = coords["y"] * scale_y
+                markers[sel_idx]["x"] = real_x
+                markers[sel_idx]["y"] = real_y
+                markers[sel_idx]["facility"] = mr.nearest_facility_name(real_x, real_y)
                 st.rerun()
 
 st.divider()
