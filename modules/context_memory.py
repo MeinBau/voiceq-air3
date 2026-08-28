@@ -35,6 +35,7 @@ def init_session_state() -> None:
         "situation_type": "",
         "situation_reason": "",
         "situation_unmatched": "",
+        "voice_transcript": "",
         "provider": engine.configured_provider(),
         "selected_model": engine.default_model_for(engine.configured_provider()),
         "model_options": [],

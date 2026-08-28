@@ -18,6 +18,7 @@ from modules import organization as org
 from modules import playbook as pb
 from modules import prompts
 from modules import sources
+from modules import stt
 from modules import llm_engine as engine
 
 st.set_page_config(page_title="VOICE-CUE (작비스)", layout="wide")
@@ -152,6 +153,53 @@ with st.sidebar:
                 run_utterance(speaker_choice, utterance_text.strip())
 
     st.divider()
+    st.subheader("음성 입력 (Whisper)")
+    if not stt.is_configured():
+        st.caption(
+            "⚠ OPENAI_API_KEY가 설정되지 않아 음성 입력을 쓸 수 없습니다. "
+            "위 텍스트 입력을 이용하거나 .streamlit/secrets.toml에 키를 추가하세요."
+        )
+    else:
+        voice_speaker = st.selectbox("화자", SPEAKERS, key="voice_speaker")
+        if voice_speaker == "직접입력":
+            voice_speaker = st.text_input("화자명 직접 입력", value="", key="voice_speaker_manual")
+        else:
+            voice_info = org.lookup(voice_speaker)
+            if voice_info:
+                st.caption(
+                    f"{voice_info['rank']} · {', '.join(voice_info['domain'])} · "
+                    f"영향력 {voice_info['influence']:.2f}"
+                )
+
+        audio_value = st.audio_input("발언 녹음", key="voice_audio_input")
+        if audio_value is not None and st.button(
+            "음성 → 텍스트 변환", use_container_width=True, key="transcribe_btn"
+        ):
+            with st.spinner("Whisper로 변환 중..."):
+                try:
+                    st.session_state.voice_transcript = stt.transcribe(audio_value.getvalue())
+                except RuntimeError as e:
+                    st.error(str(e))
+
+        if st.session_state.voice_transcript:
+            edited_transcript = st.text_area(
+                "변환된 발언 (필요하면 수정 후 처리)",
+                value=st.session_state.voice_transcript,
+                key="voice_transcript_edit",
+                height=100,
+            )
+            if st.button(
+                "음성 발언 처리", type="primary", use_container_width=True, key="process_voice_btn"
+            ):
+                if not voice_speaker or not edited_transcript.strip():
+                    st.warning("화자와 발언 내용을 확인하세요.")
+                else:
+                    with st.spinner("분석 중..."):
+                        run_utterance(voice_speaker, edited_transcript.strip())
+                    st.session_state.voice_transcript = ""
+                    st.rerun()
+
+    st.divider()
     st.subheader("시연 시나리오 자동 재생")
     if st.button("샘플 시나리오 재생 (ORE 훈련)", use_container_width=True):
         import json
@@ -247,7 +295,7 @@ with st.sidebar:
             "context_memory_summary", "user_corrections", "utterance_log", "cop_layout",
             "situation_board", "operation_log", "latency_history",
             "display_latency_history", "dropped_sources",
-            "map_markers", "_last_map_click",
+            "map_markers", "_last_map_click", "voice_transcript",
         ):
             st.session_state.pop(key, None)
         cm.init_session_state()
