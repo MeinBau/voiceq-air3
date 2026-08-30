@@ -121,15 +121,22 @@ def train(args: argparse.Namespace) -> None:
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    # bf16은 Ampere(SM 80) 이상에서만 된다. Colab 무료 티어의 T4는 Turing(SM 75)이라
+    # bf16을 지원하지 않아, 그대로 두면 학습이 시작도 못 하고 죽는다. GPU를 보고 고른다.
+    use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+    compute_dtype = torch.bfloat16 if use_bf16 else torch.float16
+    gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
+    print(f"[train] {gpu_name} · 연산 dtype {('bfloat16' if use_bf16 else 'float16')}")
+
     quant_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_compute_dtype=compute_dtype,
         bnb_4bit_use_double_quant=True,   # 기획서의 4bit 2~4GB 목표를 맞추기 위한 이중 양자화
     )
     model = AutoModelForCausalLM.from_pretrained(
         args.model, quantization_config=quant_config, device_map="auto",
-        torch_dtype=torch.bfloat16,
+        torch_dtype=compute_dtype,
     )
     model.config.use_cache = False
 
@@ -148,7 +155,7 @@ def train(args: argparse.Namespace) -> None:
     def to_dataset(split: str) -> "Dataset":
         return Dataset.from_list([{"messages": r["messages"]} for r in load_sft(split)])
 
-    config = SFTConfig(
+    kwargs = dict(
         output_dir=str(args.out),
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch_size,
@@ -160,15 +167,24 @@ def train(args: argparse.Namespace) -> None:
         eval_strategy="epoch",
         save_strategy="epoch",
         save_total_limit=2,
-        bf16=True,
+        bf16=use_bf16,
+        fp16=not use_bf16,
         gradient_checkpointing=True,
-        max_length=args.max_seq_len,
+        # PEFT 어댑터와 함께 쓰면 reentrant 방식에서 "입력에 grad가 없다"며 역전파가
+        # 끊긴다. 비reentrant 구현으로 명시해야 한다.
+        gradient_checkpointing_kwargs={"use_reentrant": False},
         # 시스템 프롬프트가 길고 모든 샘플이 동일하다. 거기에 손실을 걸면 프롬프트
         # 암기에 용량이 쓰이므로 assistant 응답 구간에만 손실을 건다.
         completion_only_loss=True,
         report_to=[],
         seed=args.seed,
     )
+    # 시퀀스 길이 인자 이름이 trl 0.20에서 max_seq_length -> max_length로 바뀌었다.
+    # 폐쇄망 서버에 어떤 버전이 깔려 있을지 모르므로 받아들이는 쪽에 맞춘다.
+    import inspect
+    accepted = inspect.signature(SFTConfig.__init__).parameters
+    kwargs["max_length" if "max_length" in accepted else "max_seq_length"] = args.max_seq_len
+    config = SFTConfig(**{k: v for k, v in kwargs.items() if k in accepted})
     trainer = SFTTrainer(
         model=model,
         args=config,
@@ -177,7 +193,12 @@ def train(args: argparse.Namespace) -> None:
         processing_class=tokenizer,
         peft_config=peft_config,
     )
-    trainer.train()
+    # Colab 무료 티어는 세션이 끊길 수 있다. 에폭마다 저장해 두고, 체크포인트가 있으면
+    # 처음부터 다시 돌리지 않고 이어서 학습한다.
+    checkpoints = sorted(args.out.glob("checkpoint-*")) if args.out.exists() else []
+    if checkpoints:
+        print(f"[train] 체크포인트 발견({checkpoints[-1].name}) — 이어서 학습합니다.")
+    trainer.train(resume_from_checkpoint=bool(checkpoints))
 
     adapter_dir = args.out / "adapter"
     trainer.model.save_pretrained(adapter_dir)
