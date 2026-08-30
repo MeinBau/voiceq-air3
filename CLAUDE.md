@@ -141,7 +141,7 @@ voice-cue/
   → 확정 버튼을 눌러야 처리됨 (오인식 텍스트가 그대로 일지에 들어가지 않도록 확인 단계를
   둠)
 ```json
-{ "speaker": "기지작전과장", "utterance": "무인기 2대 식별되었습니다.", "timestamp": "14:02:07" }
+{ "speaker": "항공작전상황담당", "utterance": "무인기 2대 식별되었습니다.", "timestamp": "14:02:07" }
 ```
 
 ### 5.2 화자/편제 (`data/organization.json`)
@@ -149,8 +149,8 @@ voice-cue/
 영향력 0.85 이상(단장급)은 결심으로, 0.5 이하(기타 지휘관 등)는 단순 사실 전파로 다르게
 취급하도록 프롬프트 규칙(`prompts.py`의 `_COMMON_RULES`)에 명시되어 있습니다.
 ```json
-{ "title": "기지작전과장", "rank": "중령", "unit": "OPS",
-  "domain": ["상황", "작전통제", "보고"], "influence": 0.75 }
+{ "title": "항공작전과장", "rank": "중령", "unit": "OPS",
+  "domain": ["항공작전", "작전통제", "상황"], "influence": 0.75 }
 ```
 
 ### 5.3 LLM 산출물 — FAST/FULL 두 경로로 분리 (한 번의 JSON이 아님)
