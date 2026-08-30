@@ -44,7 +44,7 @@ def compact(turn: dict, split: str, row_id: int) -> dict:
         "memory_after": turn["full_target"]["context_memory"],
         "corrections": turn["state_in"]["user_corrections"],
         "board": turn["full_target"]["situation_board"],
-        "cop_names": turn["cop_reference"]["names"],
+        "cop_panels": turn["cop_reference"]["panels"],
         "cop_unresolved": turn["cop_reference"]["unresolved_slots"],
         "prior_open_events": [
             {"event_id": e["event_id"], "title": e["title"]}

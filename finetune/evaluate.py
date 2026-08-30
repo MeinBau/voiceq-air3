@@ -6,9 +6,11 @@
 
 지표별 구현 위치:
     ① 필요정보 표출 지연시간   → fast_latency_p50 / p95 (FAST 경로 실측, 목표 5초 이내)
-    ② 핵심정보 상위배치 정확도 → cop_exact / cop_top6_overlap
+    ② 핵심정보 상위배치 정확도 → cop_exact / cop_cell_match
                                  예측한 상황 유형을 playbook.build_layout()에 넣어 나온
                                  레이아웃을 전문가 정답 레이아웃(cop_reference)과 비교한다.
+                                 cop_cell_match는 2행 6열 열두 칸을 펼쳐 같은 자리에 같은
+                                 화면이 떠 있는 비율이라, 큰 자리를 틀릴수록 크게 깎인다.
                                  배치는 플레이북이 결정하므로 유형만 맞히면 100%가 되며,
                                  이것이 "일치율 90% 이상"을 구조적으로 보장하는 설계다.
     ③ 숙련도별 품질 편차       → 사람 운용자 비교 실험이 필요해 이 스크립트 범위 밖.
@@ -153,6 +155,38 @@ def keyword_accuracy(reference: str, hypothesis: str) -> float:
         return 1.0 if not keywords(hypothesis) else 0.0
     hyp_text = hypothesis or ""
     return sum(1 for k in ref_kw if k in hyp_text) / len(ref_kw)
+
+
+def _paint(panels: list[dict], id_key: str) -> dict[tuple[int, int], str]:
+    """레이아웃을 (행, 열) -> source_id 격자로 펼친다."""
+    cells: dict[tuple[int, int], str] = {}
+    for panel in panels:
+        row, col, rspan, cspan = panel["grid"]
+        for r in range(row, row + rspan):
+            for c in range(col, col + cspan):
+                cells[(r, c)] = panel[id_key]
+    return cells
+
+
+def _cell_agreement(gold_panels: list[dict], pred_layout: list[dict]) -> float:
+    """기획서 3-라② "핵심정보 상위배치 정확도" — 벽면 칸 단위 일치율.
+
+    화면 이름의 집합만 비교하면 큰 자리에 뜬 핵심 화면과 구석의 한 칸짜리 보조
+    화면이 똑같이 1점이 된다. 실제로 지휘관이 보는 것은 면적이므로, 2행 6열
+    열두 칸을 각각 펼쳐 같은 자리에 같은 화면이 떠 있는 비율로 센다. 1순위
+    대형 화면을 틀리면 한 번에 4칸을 잃는다.
+
+    정답 쪽은 데이터셋에 저장된 panels(우선순위·자리·크기 포함)를, 예측 쪽은
+    예측한 상황 유형으로 방금 만든 레이아웃을 쓴다.
+    """
+    gold_cells = _paint(gold_panels, "name")
+    pred_cells = _paint(
+        [{"grid": item["grid"], "name": item["name"]} for item in pred_layout], "name"
+    )
+    if not gold_cells:
+        return 1.0 if not pred_cells else 0.0
+    hit = sum(1 for cell, name in gold_cells.items() if pred_cells.get(cell) == name)
+    return hit / len(gold_cells)
 
 
 _EVENT_ID_RE = re.compile(r"^(?:사태|사건|상황|이벤트|event)\s*[-_]?\s*(\d+)$", re.IGNORECASE)
@@ -336,9 +370,7 @@ def evaluate(turns: list[dict], backend: object, limit: int | None = None) -> di
         gold_ids = turn["cop_reference"]["source_ids"]
         if pred_ids == gold_ids:
             cop_exact += 1
-        top = 6  # Video Wall 2행 6열 중 윗줄 = "상위 배치"
-        gold_top, pred_top = set(gold_ids[:top]), set(pred_ids[:top])
-        cop_overlap_sum += len(gold_top & pred_top) / max(len(gold_top), 1)
+        cop_overlap_sum += _cell_agreement(turn["cop_reference"]["panels"], layout)
 
         # ---------- FULL (기록 경로) ----------
         try:
@@ -400,7 +432,7 @@ def evaluate(turns: list[dict], backend: object, limit: int | None = None) -> di
         },
         "지표②_상위배치정확도": {
             "cop_exact_pct": pct(cop_exact),
-            "cop_top6_overlap_pct": round(100 * cop_overlap_sum / n, 2) if n else 0.0,
+            "cop_cell_match_pct": round(100 * cop_overlap_sum / n, 2) if n else 0.0,
             "situation_accuracy_pct": pct(fast_correct),
             "목표": "90% 이상",
         },

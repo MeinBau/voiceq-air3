@@ -46,48 +46,55 @@ def _distribute(total: int, weights: list[float]) -> list[int]:
     return widths
 
 
+# 우선순위별 고정 배치표 (2행 6열). 값은 (행, 열, 행병합, 열병합)이며 목록 순서가
+# 곧 우선순위다. 어느 항목이든 면적이 앞 항목보다 커지지 않도록 손으로 맞춰 뒀다.
+#
+# 계산식으로 나누던 것을 표로 바꾼 이유:
+#   예전에는 남은 패널을 위/아래 두 줄로 갈라 각 줄 안에서만 폭을 나눴다. 그러면
+#   아랫줄 첫 패널이 윗줄 패널보다 넓어지는 일이 생겼다 — 8개를 띄우면 6순위(상시
+#   표출용 보충 화면)가 2칸인데 2~5순위(그 상황에 실제로 필요한 화면)는 1칸이었다.
+#   중요도·긴급도에 따라 크기를 정한다는 전제가 거기서 무너진다. 배치 경우의 수가
+#   12가지뿐이므로 계산으로 맞추기보다 표로 고정하는 편이 검증도 쉽다.
+_TILINGS: dict[int, list[tuple[int, int, int, int]]] = {
+    1: [(1, 1, 2, 6)],
+    2: [(1, 1, 2, 4), (1, 5, 2, 2)],
+    3: [(1, 1, 2, 3), (1, 4, 2, 2), (1, 6, 2, 1)],
+    4: [(1, 1, 2, 3), (1, 4, 1, 3), (2, 4, 1, 2), (2, 6, 1, 1)],
+    5: [(1, 1, 2, 2), (1, 3, 1, 2), (1, 5, 1, 2), (2, 3, 1, 2), (2, 5, 1, 2)],
+    6: [(1, 1, 2, 2), (1, 3, 1, 2), (1, 5, 1, 2), (2, 3, 1, 2), (2, 5, 1, 1), (2, 6, 1, 1)],
+    7: [(1, 1, 2, 2), (1, 3, 1, 2), (1, 5, 1, 2),
+        (2, 3, 1, 1), (2, 4, 1, 1), (2, 5, 1, 1), (2, 6, 1, 1)],
+    8: [(1, 1, 2, 2), (1, 3, 1, 2), (1, 5, 1, 1), (1, 6, 1, 1),
+        (2, 3, 1, 1), (2, 4, 1, 1), (2, 5, 1, 1), (2, 6, 1, 1)],
+    9: [(1, 1, 2, 2), (1, 3, 1, 1), (1, 4, 1, 1), (1, 5, 1, 1), (1, 6, 1, 1),
+        (2, 3, 1, 1), (2, 4, 1, 1), (2, 5, 1, 1), (2, 6, 1, 1)],
+}
+
+
 def tiling_for(n: int) -> list[tuple[int, int, int, int]]:
     """패널 n개를 2행 6열에 빈틈없이 배치한다.
 
-    개수에 따라 매번 다시 계산하므로 화면이 2개든 9개든 벽에 빈칸이 남지 않는다.
+    개수에 따라 자리를 다시 잡으므로 화면이 2개든 9개든 벽에 빈칸이 남지 않는다.
     우선순위가 높을수록 넓은 자리를 갖고, 1순위는 위아래를 관통하는 대형 화면이 된다.
     반환값은 (행, 열, 행병합, 열병합) 목록이며 우선순위 순서와 일치한다.
     """
     if n <= 0:
         return []
     n = min(n, MAX_PANELS)
-    if n == 1:
-        return [(1, 1, GRID_ROWS, GRID_COLS)]
+    if n in _TILINGS:
+        return list(_TILINGS[n])
 
-    # 순위가 낮아질수록 완만하게 줄어드는 가중치. 급격히 줄이면 하위 화면이 너무 작아진다.
-    weights = [1.0 / (i + 1) ** 0.7 for i in range(n)]
-
-    rest = n - 1
-    # 나머지 패널을 2행으로 나눠 담을 때 최소로 필요한 열 수.
-    need_cols = (rest + 1) // 2
-    max_first = max(1, GRID_COLS - need_cols)
-    first_w = round(GRID_COLS * weights[0] / sum(weights))
-    first_w = max(1, min(max_first, first_w))
-    if max_first >= 2:
-        first_w = max(first_w, 2)  # 1순위는 최소 2열은 확보한다.
-
-    slots = [(1, 1, GRID_ROWS, first_w)]
-    free_cols = GRID_COLS - first_w
-    start_col = 1 + first_w
-
-    if rest <= free_cols:
-        # 남은 패널이 열 수보다 적으면 각자 위아래를 관통하는 세로 패널이 된다.
-        col = start_col
-        for w in _distribute(free_cols, weights[1:]):
-            slots.append((1, col, GRID_ROWS, w))
-            col += w
-    else:
-        top_n = (rest + 1) // 2
-        for row, part in ((1, weights[1 : 1 + top_n]), (2, weights[1 + top_n :])):
-            col = start_col
-            for w in _distribute(free_cols, part):
-                slots.append((row, col, 1, w))
-                col += w
+    # 10개 이상은 12칸에 한 칸짜리가 대부분이라 크기로 중요도를 드러낼 수 없다.
+    # 아랫줄은 여섯 칸을 하나씩 채우고, 남는 열은 윗줄 상위 화면에 몰아줘
+    # 최소한 하위 화면이 상위보다 커지는 역전만은 막는다.
+    top_n = n - GRID_COLS
+    weights = [1.0 / (i + 1) ** 0.7 for i in range(top_n)]
+    slots: list[tuple[int, int, int, int]] = []
+    col = 1
+    for w in _distribute(GRID_COLS, weights):
+        slots.append((1, col, 1, w))
+        col += w
+    slots.extend((2, c, 1, 1) for c in range(1, GRID_COLS + 1))
     return slots
 
 
@@ -131,6 +138,22 @@ def find_situation(name: str) -> dict | None:
         if target in situation["name"] or situation["name"] in target:
             return situation
     return None
+
+
+DEFAULT_PANEL_BUDGET = 6
+
+
+def panel_budget() -> int:
+    """상시 표출 화면까지 포함해 한 번에 띄울 화면 수의 상한.
+
+    플레이북의 max_panels로 운용자가 조정한다(없으면 6). 상황별 화면이 이보다
+    많으면 그건 운용자가 명시한 것이므로 자르지 않고, 상시 보충만 여기서 멈춘다.
+    """
+    raw = load_playbook().get("max_panels", DEFAULT_PANEL_BUDGET)
+    try:
+        return max(1, min(MAX_PANELS, int(raw)))
+    except (TypeError, ValueError):
+        return DEFAULT_PANEL_BUDGET
 
 
 def describe_for_llm() -> str:
@@ -323,14 +346,18 @@ def build_layout(situation_name: str, utterance: str = "") -> tuple[list[dict], 
         if len(layout) >= MAX_PANELS:
             break
 
-    # --- 빈 자리 채우기 ---
-    # 지휘소 대형 화면에 빈 칸이 남아 있으면 안 된다. 상황별 화면을 배치하고 남은 자리는
-    # 상시 표출 목록 → 발언과 가장 관련 있는 CCTV 순으로 채운다.
+    # --- 상시 표출 화면으로 보충 ---
+    # 상황별 화면만으로는 화면 수가 적을 수 있어 상시 표출 목록으로 채운다. 다만
+    # 벽면 12칸을 전부 다른 화면으로 채우면 안 된다 — 그러면 대부분이 한 칸짜리가
+    # 되어 중요도에 따라 크기를 다르게 준다는 전제가 사라지고, 정작 그 상황에 필요한
+    # 화면이 상시 보충 화면에 묻힌다. panel_budget까지만 보충하고, 남는 칸은
+    # tiling_for가 상위 화면을 키워서 메운다(빈 칸은 여전히 생기지 않는다).
+    budget = panel_budget()
     for slot_name in load_playbook().get("always_on", []):
-        if len(layout) >= MAX_PANELS:
+        if len(layout) >= budget:
             break
         for source in resolve_slot(slot_name, utterance, used):
-            if len(layout) >= MAX_PANELS:
+            if len(layout) >= budget:
                 break
             if source["id"] not in used:
                 _append(source, slot_name, "상시")

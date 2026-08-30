@@ -191,7 +191,19 @@ def emit_turn(state: ScenarioState, rng: random.Random, speaker: str, utterance:
         "cop_reference": {
             "situation": situation_type,
             "source_ids": [item["source_id"] for item in layout],
-            "names": [item["name"] for item in layout],
+            # 화면 이름만으로는 검수가 안 된다. 어느 자리에 얼마만 한 크기로 뜨는지가
+            # 기획서 3-라② "핵심정보 상위배치"의 실체이므로 자리·크기까지 함께 남긴다.
+            "panels": [
+                {
+                    "priority": item["priority"],
+                    "name": item["name"],
+                    "grid": list(item["grid"]),
+                    "position": item["position"],
+                    "origin": item["origin"],
+                    "slot": item["slot"],
+                }
+                for item in layout
+            ],
             "unresolved_slots": unresolved,
         },
     }
