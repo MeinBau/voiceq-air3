@@ -4165,11 +4165,11 @@
   },
   {
    "id": "CCTV-UNIT-AD",
-   "name": "방공포대 청사 CCTV",
+   "name": "대공방어대 청사 CCTV",
    "category": "부대시설",
    "feed_type": "CCTV",
    "cell": "G2",
-   "description": "방공포대 청사(G2) 감시. 해당 부대 담당 분야 상황 발생 시 참조.",
+   "description": "대공방어대 청사(G2) 감시. 해당 부대 담당 분야 상황 발생 시 참조.",
    "tags": [
     "교전",
     "대공",

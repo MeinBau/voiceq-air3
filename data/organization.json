@@ -19,7 +19,7 @@
     { "id": "MP", "name": "군사경찰대대", "parent": "SEC", "cell": "A5" },
     { "id": "ENG", "name": "공병대대", "parent": "SEC", "cell": "B5" },
     { "id": "CBRN", "name": "화생방지원대", "parent": "SEC", "cell": "D6" },
-    { "id": "AD", "name": "방공포대", "parent": "SEC", "cell": "G2" },
+    { "id": "AD", "name": "대공방어대", "parent": "SEC", "cell": "G2" },
 
     { "id": "SPT", "name": "작전지원전대", "parent": "WING", "cell": "F6" },
     { "id": "SUP", "name": "보급대대", "parent": "SPT", "cell": "E6" },
@@ -51,7 +51,7 @@
       "domain": ["경계", "초병", "출입통제", "침입"] },
     { "id": "ATC-C", "title": "운항관제대대장", "rank": "중령", "unit": "ATC", "influence": 0.65,
       "domain": ["관제", "항적", "활주로"] },
-    { "id": "AD-C", "title": "방공포대장", "rank": "소령", "unit": "AD", "influence": 0.65,
+    { "id": "AD-C", "title": "대공방어대장", "rank": "소령", "unit": "AD", "influence": 0.65,
       "domain": ["대공방어", "교전", "무인기"] },
     { "id": "WX-C", "title": "기상대대장", "rank": "소령", "unit": "WX", "influence": 0.6,
       "domain": ["기상", "시정", "비행가부"] },
@@ -63,7 +63,11 @@
       "domain": ["화생방", "제독"] },
     { "id": "MED-C", "title": "항공의무대대장", "rank": "중령", "unit": "MED", "influence": 0.5,
       "domain": ["의무", "응급", "후송"] },
-    { "id": "SDO", "title": "당직사관", "rank": "대위", "unit": "WING", "influence": 0.4,
-      "domain": ["상황보고", "전파"] }
+    { "id": "MISC", "title": "기타 지휘관", "rank": "영관급", "unit": "WING", "influence": 0.5,
+      "domain": ["일반", "회의참석"],
+      "note": "편제 목록에 없는 회의 참석자를 대신하는 일반 화자. 담당분야가 특정되지 않으므로 단독으로 상황 판단을 뒤집지 않는다." },
+    { "id": "CHAT", "title": "지휘통제망 채팅", "rank": "체계", "unit": "OPS", "influence": 0.6,
+      "domain": ["상황전파", "신규상황"],
+      "note": "사람의 발언이 아니라 지휘통제망 채팅으로 들어온 상황 전파다. 새로운 사태를 최초로 인지하는 주된 경로이므로 신규 사태 개시 근거가 된다." }
   ]
 }
