@@ -1,0 +1,236 @@
+"""VOICE-CUE sLLM QLoRA 파인튜닝 (기획서 4-다② / 3-다).
+
+기획서가 지정한 조건:
+    4-다② "폐쇄망 구동이 가능한 오픈소스 한국어 특화 sLLM(Qwen 2.5 또는 Llama-3)을
+           선정하고, LoRA 방식으로 전체가 아닌 필요한 부분만 효율적으로 학습"
+    3-다   "판단·구성 모델 — 한국어 특화 sLLM, 4bit 양자화 … 2~4GB"
+
+기본 모델을 Qwen2.5-3B-Instruct로 잡은 이유:
+    4bit(nf4) 가중치가 약 2GB로 기획서의 "2~4GB" 구간 한가운데에 들어온다.
+    7B는 4bit로도 4.5GB 안팎이라 상한을 넘고, 1.5B는 여유는 있지만 한국어 지시
+    이행이 눈에 띄게 불안정하다. VRAM이 부족하면 --model 로 1.5B를 지정하면 된다.
+
+학습 손실은 assistant 응답 구간에만 건다(completion-only). 시스템 프롬프트가 길고
+매 샘플 동일하므로, 거기에도 손실을 걸면 모델이 프롬프트 암기에 용량을 쓰고 정작
+JSON 형식 준수는 덜 배운다.
+
+few-shot 예시는 학습 데이터에 넣지 않는다(gen_dataset.py 기본값). 파인튜닝의 목적이
+few-shot 없이도 형식을 지키게 만들어 입력 토큰과 지연시간을 줄이는 것이기 때문이다 —
+기획서 3-다 "명령 생성 2초 이내"에 직접 기여한다.
+
+로컬 GTX 970(4GB, Compute Capability 5.2)에서는 학습할 수 없다. bitsandbytes의 4bit
+커널이 Ampere/Turing 이상을 요구하고 VRAM도 모자란다. Colab T4(16GB) 이상 또는
+부대 내 GPU 서버에서 실행하는 것을 전제로 한다. --dry-run은 GPU·torch 없이도
+데이터셋과 토큰 길이를 점검한다.
+
+사용:
+    python finetune/train_lora.py --dry-run           # 데이터·길이 점검만 (torch 불필요)
+    python finetune/train_lora.py                     # 실제 학습
+    python finetune/train_lora.py --merge finetune/out/merged   # 어댑터 병합 후 저장
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import statistics
+from pathlib import Path
+
+DATA_DIR = Path(__file__).resolve().parent / "data"
+DEFAULT_MODEL = "Qwen/Qwen2.5-3B-Instruct"
+
+
+def load_sft(split: str) -> list[dict]:
+    path = DATA_DIR / f"sft_{split}.jsonl"
+    if not path.exists():
+        raise SystemExit(f"{path} 가 없습니다. 먼저 python finetune/gen_dataset.py 를 실행하세요.")
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+def _estimate_tokens(text: str) -> int:
+    """토크나이저 없이 쓰는 근사치. 한글은 문자당 대략 0.7토큰, 그 외는 0.3토큰으로 본다.
+
+    Qwen2.5 BPE 기준 실측에 맞춘 어림수이며, --dry-run에서 max_seq_len을 정할 때
+    자리를 잡기 위한 용도다. 정확한 값이 필요하면 transformers를 설치하면 dry-run이
+    자동으로 실제 토크나이저를 쓴다.
+    """
+    hangul = sum(1 for ch in text if "가" <= ch <= "힣")
+    return int(hangul * 0.7 + (len(text) - hangul) * 0.3)
+
+
+def dry_run(args: argparse.Namespace) -> None:
+    """torch 없이 데이터셋을 점검한다. 학습 환경에 올리기 전 로컬에서 돌리는 관문."""
+    try:
+        from transformers import AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained(args.model)
+
+        def count(messages: list[dict]) -> int:
+            # tokenize=True의 반환 타입이 transformers 버전마다 다르다(4.x는 id 리스트,
+            # 5.x는 BatchEncoding). 문자열로 렌더한 뒤 따로 인코딩하면 버전과 무관하다.
+            text = tokenizer.apply_chat_template(messages, tokenize=False)
+            return len(tokenizer(text, add_special_tokens=False)["input_ids"])
+        source = f"실제 토크나이저 ({args.model})"
+    except Exception as exc:  # transformers 미설치 또는 오프라인
+        tokenizer = None
+
+        def count(messages: list[dict]) -> int:
+            return sum(_estimate_tokens(m["content"]) for m in messages) + 4 * len(messages)
+        source = f"근사치 추정 (토크나이저 사용 불가: {type(exc).__name__})"
+
+    print(f"[dry-run] 토큰 길이 계산: {source}\n")
+
+    total = 0
+    for split in ("train", "valid", "test"):
+        rows = load_sft(split)
+        total += len(rows)
+        by_route: dict[str, list[int]] = {"fast": [], "full": []}
+        for row in rows:
+            # 마지막 메시지가 assistant 응답 — 손실이 걸리는 구간이다.
+            assert row["messages"][-1]["role"] == "assistant", "마지막 메시지가 assistant가 아님"
+            assert row["messages"][0]["role"] == "system", "첫 메시지가 system이 아님"
+            json.loads(row["messages"][-1]["content"])  # 타깃이 유효 JSON인지
+            by_route[row["route"]].append(count(row["messages"]))
+
+        print(f"[{split}] {len(rows)}건")
+        for route, lengths in by_route.items():
+            if not lengths:
+                continue
+            lengths.sort()
+            print(f"   {route:5s} n={len(lengths):5d}  "
+                  f"median={statistics.median(lengths):6.0f}  "
+                  f"p95={lengths[int(len(lengths) * 0.95) - 1]:6.0f}  "
+                  f"max={lengths[-1]:6.0f}")
+
+    print(f"\n총 SFT 샘플 {total}건")
+    all_lengths = [count(r["messages"]) for split in ("train", "valid")
+                   for r in load_sft(split)]
+    p99 = sorted(all_lengths)[int(len(all_lengths) * 0.99) - 1]
+    print(f"train+valid p99 길이 {p99} → --max-seq-len {args.max_seq_len} "
+          f"{'충분' if p99 <= args.max_seq_len else '부족: 잘림 발생'}")
+    print("[dry-run] 통과 — 스키마·역할 순서·타깃 JSON 유효성 이상 없음")
+
+
+def train(args: argparse.Namespace) -> None:
+    import torch
+    from datasets import Dataset
+    from peft import LoraConfig
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+    from trl import SFTConfig, SFTTrainer
+
+    tokenizer = AutoTokenizer.from_pretrained(args.model)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    quant_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_use_double_quant=True,   # 기획서의 4bit 2~4GB 목표를 맞추기 위한 이중 양자화
+    )
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model, quantization_config=quant_config, device_map="auto",
+        torch_dtype=torch.bfloat16,
+    )
+    model.config.use_cache = False
+
+    peft_config = LoraConfig(
+        r=args.lora_r,
+        lora_alpha=args.lora_r * 2,
+        lora_dropout=0.05,
+        bias="none",
+        task_type="CAUSAL_LM",
+        # attention과 MLP를 모두 잡는다. attention만 잡으면 JSON 스키마는 따라오지만
+        # 한국어 군사 용어 표현이 베이스 모델 말투에서 잘 안 벗어난다.
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
+                        "gate_proj", "up_proj", "down_proj"],
+    )
+
+    def to_dataset(split: str) -> "Dataset":
+        return Dataset.from_list([{"messages": r["messages"]} for r in load_sft(split)])
+
+    config = SFTConfig(
+        output_dir=str(args.out),
+        num_train_epochs=args.epochs,
+        per_device_train_batch_size=args.batch_size,
+        gradient_accumulation_steps=args.grad_accum,
+        learning_rate=args.lr,
+        lr_scheduler_type="cosine",
+        warmup_ratio=0.03,
+        logging_steps=10,
+        eval_strategy="epoch",
+        save_strategy="epoch",
+        save_total_limit=2,
+        bf16=True,
+        gradient_checkpointing=True,
+        max_length=args.max_seq_len,
+        # 시스템 프롬프트가 길고 모든 샘플이 동일하다. 거기에 손실을 걸면 프롬프트
+        # 암기에 용량이 쓰이므로 assistant 응답 구간에만 손실을 건다.
+        completion_only_loss=True,
+        report_to=[],
+        seed=args.seed,
+    )
+    trainer = SFTTrainer(
+        model=model,
+        args=config,
+        train_dataset=to_dataset("train"),
+        eval_dataset=to_dataset("valid"),
+        processing_class=tokenizer,
+        peft_config=peft_config,
+    )
+    trainer.train()
+
+    adapter_dir = args.out / "adapter"
+    trainer.model.save_pretrained(adapter_dir)
+    tokenizer.save_pretrained(adapter_dir)
+    print(f"어댑터 저장: {adapter_dir}")
+    print("다음 단계: python finetune/evaluate.py --backend hf "
+          f"--model {args.model} --adapter {adapter_dir}")
+
+
+def merge(args: argparse.Namespace) -> None:
+    """어댑터를 베이스에 병합해 통짜 가중치로 저장한다.
+
+    vLLM/Ollama로 폐쇄망 서빙할 때 어댑터를 따로 얹는 것보다 병합본이 다루기 쉽다.
+    병합은 fp16으로 해야 하며(4bit 로드 상태에서는 병합할 수 없다), 병합 후 서빙
+    단계에서 다시 4bit/GGUF로 양자화해 기획서의 2~4GB 목표를 맞춘다.
+    """
+    import torch
+    from peft import PeftModel
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    base = AutoModelForCausalLM.from_pretrained(
+        args.model, torch_dtype=torch.float16, device_map="cpu"
+    )
+    merged = PeftModel.from_pretrained(base, args.out / "adapter").merge_and_unload()
+    merged.save_pretrained(args.merge)
+    AutoTokenizer.from_pretrained(args.model).save_pretrained(args.merge)
+    print(f"병합 저장: {args.merge}")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model", default=DEFAULT_MODEL)
+    ap.add_argument("--out", type=Path, default=Path(__file__).resolve().parent / "out")
+    ap.add_argument("--epochs", type=float, default=3.0)
+    ap.add_argument("--batch-size", type=int, default=2)
+    ap.add_argument("--grad-accum", type=int, default=8)
+    ap.add_argument("--lr", type=float, default=1e-4)
+    ap.add_argument("--lora-r", type=int, default=16)
+    ap.add_argument("--max-seq-len", type=int, default=2048)
+    ap.add_argument("--seed", type=int, default=20260829)
+    ap.add_argument("--dry-run", action="store_true",
+                    help="torch 없이 데이터셋 스키마와 토큰 길이만 점검한다.")
+    ap.add_argument("--merge", type=Path, default=None,
+                    help="학습된 어댑터를 베이스에 병합해 이 경로에 저장한다.")
+    args = ap.parse_args()
+
+    if args.dry_run:
+        dry_run(args)
+    elif args.merge:
+        merge(args)
+    else:
+        train(args)
+
+
+if __name__ == "__main__":
+    main()

@@ -112,6 +112,15 @@ voice-cue/
 │   │   └── scenario1.json       # 시연용 샘플 발언 시퀀스 (ORE 훈련)
 │   ├── context_memory.json      # (선택) persist_to_disk() 호출 시 생성, git 추적 안 함
 │   └── operation_log.json       # (선택) persist_to_disk() 호출 시 생성, git 추적 안 함
+├── finetune/                    # 파인튜닝 (기획서 3-나 1단계) — 앱 실행과 완전히 무관
+│   ├── README.md                # 계획·기획서 대응표·실측 결과·학습 환경
+│   ├── scenario_bank.py         # 합성 발언·정답 템플릿 (실데이터 확보 시 여기만 교체)
+│   ├── gen_dataset.py           # JSONL 학습 데이터 생성. 프롬프트는 modules/prompts.py 재사용
+│   ├── train_lora.py            # Qwen2.5-3B QLoRA 학습·병합 (--dry-run은 GPU 불필요)
+│   ├── evaluate.py              # 기획서 3-라 품질지표 측정 + 하네스 자기검증
+│   ├── requirements-train.txt   # 학습 전용 의존성 (앱 requirements.txt와 분리)
+│   ├── data/                    # 생성된 JSONL (gitignore, seed 20260829로 재생성)
+│   └── out/                     # 학습 산출물 (gitignore)
 └── CLAUDE.md
 ```
 
@@ -233,6 +242,9 @@ voice-cue/
 | 다중 LLM 공급자 전환 (OpenRouter/OpenAI/로컬) | ✅ 완료 (원 기획서에는 없던 추가 구현) |
 | 외부 접속 암호 보호 | ✅ 완료 (원 기획서에는 없던 추가 구현) |
 | Whisper 음성 입력 STT | ✅ 완료 — 텍스트 입력과 별개의 UI, `OPENAI_API_KEY` 필요 (`modules/stt.py`) |
+| 파인튜닝 학습 데이터셋 구축 (기획서 3-나 1단계 "500건 이상") | ✅ 완료 — 1,546턴 / 3,092 SFT 샘플 (`finetune/gen_dataset.py`) |
+| 파인튜닝 평가 하네스 (기획서 3-라 4개 지표 / 4-다③) | ✅ 완료 — gold 자기검증 100% 통과 (`finetune/evaluate.py`) |
+| sLLM LoRA 학습 (기획서 4-다②) | ⏸ 스크립트 완성, **미실행** — 개발 PC GPU(GTX 970, CC 5.2)로는 QLoRA 불가. Colab T4 이상 필요 (`finetune/train_lora.py`) |
 
 ---
 
