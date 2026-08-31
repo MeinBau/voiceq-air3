@@ -11,7 +11,7 @@
 | 3-나 1단계 | 학습 데이터 500건 이상 | `gen_dataset.py` | ✅ **1,527건** 생성 |
 | 4-다① 데이터 구축 | 화자·MSEL·중요도·COP JSON 라벨, JSONL | `gen_dataset.py` + `scenario_bank.py` | ✅ 4종 라벨 전부 |
 | 4-다① 제약조건 | "항상 띄워야 하는 화면" 등 복합 명령문 | `scenario_bank.CONSTRAINT_TURNS` | ✅ 6종, 보정 규칙 누적까지 |
-| 4-다② 모델 학습 | Qwen2.5 / Llama-3, LoRA | `train_lora.py` (QLoRA) + `colab_train.ipynb` | ⏸ 스크립트·노트북 완성, 학습 미실행 |
+| 4-다② 모델 학습 | Qwen2.5 / Llama-3, LoRA | `train_lora.py` (QLoRA) + `kaggle_train.ipynb`/`colab_train.ipynb` | ⏸ 스크립트·노트북 완성, 학습 미실행 |
 | 4-다③ 평가 | Keyword Accuracy + BLEU/ROUGE | `evaluate.py` | ✅ 자기검증 통과 |
 | 3-라 4개 품질지표 | 표출지연/상위배치/편차/일지정확도 | `evaluate.py` | ✅ 3개 자동 측정 (③은 아래 참고) |
 | 3-다 성능 | 4bit 양자화 2~4GB | Qwen2.5-3B nf4 ≈ 2GB | ✅ 기본값으로 채택 |
@@ -51,7 +51,8 @@ python finetune/train_lora.py --dry-run
 python finetune/evaluate.py --backend gold
 python finetune/evaluate.py --backend perturb --noise 0.3   # 지표가 실제로 하락하는지
 
-# ④ 학습 (GPU 필요 — Colab은 finetune/colab_train.ipynb, 상세는 5절)
+# ④ 학습 (GPU 필요 — 끊김 없이 돌리려면 finetune/kaggle_train.ipynb, 상세는 6절.
+#    Colab은 finetune/colab_train.ipynb, 상세는 5절)
 pip install -r finetune/requirements-train.txt
 python finetune/train_lora.py
 
@@ -136,7 +137,27 @@ T4는 Turing(SM 75)이라 **bfloat16을 지원하지 않는다.** `train_lora.py
 끊길 가능성이 높다. **1.5B/2에폭으로 파이프라인을 먼저 완주시키고, 최종 수치는 3B로** 다시
 돌리는 순서를 권장한다(3B는 L4/A100 또는 Colab Pro).
 
-## 6. 로컬에서는 학습할 수 없다
+**Colab은 인터랙티브 세션이 브라우저 연결에 묶여 있어 자주 끊긴다.** Pro+의 "백그라운드
+실행"도 2026년 기준 불안정하다는 신고가 많아([참고](https://github.com/googlecolab/colabtools/issues/5950))
+믿고 쓰기 어렵다. 끊김 없이 돌리고 싶으면 아래 6절의 Kaggle 경로를 쓴다.
+
+## 6. Kaggle에서 학습하기 — 진짜로 끊김 없이 돌리려면
+
+`finetune/kaggle_train.ipynb`를 쓴다. Colab과 달리 Kaggle은 "Save Version → Save & Run All
+(Commit)"을 누르면 그 시점 노트북이 **별도 머신에서 완전히 분리되어** 처음부터 끝까지 자동
+실행된다. 브라우저를 닫아도, 컴퓨터를 꺼도 계속 돈다 — Colab의 세션-연결 모델과 근본적으로
+다르다.
+
+무료 할당량은 주당 약 30 GPU시간, 세션(커밋 실행 포함)당 최대 약 12시간, GPU는 P100(16GB) 또는
+T4×2 중 선택. 시작 전 노트북 우측 Settings 패널에서 **Accelerator를 GPU로, Internet을 On으로**
+바꿔야 한다(둘 다 기본값은 꺼짐/None).
+
+쓰는 법: 1~5번 셀(GPU 확인 → 설치 → 설정 → 데이터 생성 → 사전 점검)을 먼저 인터랙티브하게
+돌려 문제없는지 확인한 뒤, **Save Version → Save & Run All (Commit)**으로 나머지(베이스라인 →
+학습 → 평가 → 병합)를 백그라운드로 넘긴다. Google Drive 마운트 같은 게 필요 없다 —
+`/kaggle/working` 아래에 저장한 것은 커밋이 끝나면 그 버전의 Output 탭에서 그대로 받는다.
+
+## 7. 로컬에서는 학습할 수 없다
 
 이 저장소가 있는 개발 PC의 GPU는 **GTX 970 (4GB, Compute Capability 5.2)** 이다.
 
@@ -155,7 +176,7 @@ T4는 Turing(SM 75)이라 **bfloat16을 지원하지 않는다.** `train_lora.py
 
 VRAM이 모자라면 `--model Qwen/Qwen2.5-1.5B-Instruct --batch-size 1 --grad-accum 16`.
 
-## 7. 서빙 전환 — 코드 수정 없음
+## 8. 서빙 전환 — 코드 수정 없음
 
 `merge`로 만든 통짜 가중치를 vLLM 또는 Ollama로 올린 뒤, 앱 사이드바에서 공급자를
 **"로컬 서버 (Ollama / vLLM)"** 로 바꾸면 끝이다. `modules/llm_engine.py`의 `PROVIDERS`가
@@ -170,7 +191,7 @@ python finetune/evaluate.py --backend openai \
 베이스라인과 비교할 때는 **튜닝 전 모델에만 `--few-shot`을 켠다.** 튜닝 후에는 few-shot이
 필요 없어지는 것 자체가 성과이므로, 양쪽에 똑같이 켜면 절감 효과가 측정되지 않는다.
 
-## 8. 알려진 한계
+## 9. 알려진 한계
 
 - **합성 데이터다.** 기획서 4-다①이 말한 "실제 회의록·작전상황일지"가 아니라
   `scenario_bank.py`의 템플릿에서 생성한 가상 시나리오다. 문장 다양성이 실제 회의보다

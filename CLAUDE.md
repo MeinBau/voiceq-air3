@@ -118,7 +118,8 @@ voice-cue/
 │   ├── gen_dataset.py           # JSONL 학습 데이터 생성. 프롬프트는 modules/prompts.py 재사용
 │   ├── train_lora.py            # Qwen2.5-3B QLoRA 학습·병합 (--dry-run은 GPU 불필요)
 │   ├── evaluate.py              # 기획서 3-라 품질지표 측정 + 하네스 자기검증
-│   ├── colab_train.ipynb        # Colab T4 실행용 노트북 (데이터→학습→평가 일괄)
+│   ├── kaggle_train.ipynb       # Kaggle 실행용 노트북 (Save & Run All로 완전 백그라운드 실행)
+│   ├── colab_train.ipynb        # Colab T4 실행용 노트북 (세션 끊김에 취약, kaggle 우선 권장)
 │   ├── requirements-train.txt   # 학습 전용 의존성 (앱 requirements.txt와 분리)
 │   ├── data/                    # 생성된 JSONL (gitignore, seed 20260829로 재생성)
 │   └── out/                     # 학습 산출물 (gitignore)
@@ -245,7 +246,7 @@ voice-cue/
 | Whisper 음성 입력 STT | ✅ 완료 — 텍스트 입력과 별개의 UI, `OPENAI_API_KEY` 필요 (`modules/stt.py`) |
 | 파인튜닝 학습 데이터셋 구축 (기획서 3-나 1단계 "500건 이상") | ✅ 완료 — 1,527턴 / 3,054 SFT 샘플 (`finetune/gen_dataset.py`) |
 | 파인튜닝 평가 하네스 (기획서 3-라 4개 지표 / 4-다③) | ✅ 완료 — gold 자기검증 100% 통과 (`finetune/evaluate.py`) |
-| sLLM LoRA 학습 (기획서 4-다②) | ⏸ 스크립트·Colab 노트북 완성, **미실행** — 개발 PC GPU(GTX 970, CC 5.2)로는 QLoRA 불가. `finetune/colab_train.ipynb`를 Colab T4에서 실행 |
+| sLLM LoRA 학습 (기획서 4-다②) | ⏸ 스크립트·노트북 완성, **미실행** — 개발 PC GPU(GTX 970, CC 5.2)로는 QLoRA 불가. Colab은 세션이 자주 끊겨 `finetune/kaggle_train.ipynb`(Save & Run All로 완전 백그라운드 실행)를 우선 권장, Colab 버전도 `finetune/colab_train.ipynb`로 유지 |
 
 ---
 
