@@ -176,14 +176,24 @@ def train(args: argparse.Namespace) -> None:
         # 시스템 프롬프트가 길고 모든 샘플이 동일하다. 거기에 손실을 걸면 프롬프트
         # 암기에 용량이 쓰이므로 assistant 응답 구간에만 손실을 건다.
         completion_only_loss=True,
+        # trl 1.4부터 loss_type 기본값이 "chunked_nll"로 바뀌었다. 메모리를 아끼려고
+        # forward를 내부적으로 패치하는데, 이 패치가 4bit+PEFT+gradient checkpointing
+        # 조합에서 모델의 forward가 functools.partial로 감싸진 경우를 못 다뤄
+        # "'functools.partial' object has no attribute '__func__'"로 죽는다
+        # (Kaggle 실측: trl 1.12.0). "nll"로 명시해 예전 방식(패치 없음)을 쓴다 —
+        # 데이터가 짧아(p99 1681토큰) 메모리 절약 이득도 크지 않다.
+        loss_type="nll",
         report_to=[],
         seed=args.seed,
     )
-    # 시퀀스 길이 인자 이름이 trl 0.20에서 max_seq_length -> max_length로 바뀌었다.
-    # 폐쇄망 서버에 어떤 버전이 깔려 있을지 모르므로 받아들이는 쪽에 맞춘다.
+    # 인자 이름이 trl 버전마다 다르다 — 시퀀스 길이는 0.20에서 max_seq_length ->
+    # max_length로, loss_type은 1.4 미만에는 아예 없다. 폐쇄망 서버에 어떤 버전이
+    # 깔려 있을지 모르므로 설치된 버전이 실제로 받는 이름만 골라 넘긴다.
     import inspect
     accepted = inspect.signature(SFTConfig.__init__).parameters
     kwargs["max_length" if "max_length" in accepted else "max_seq_length"] = args.max_seq_len
+    if "loss_type" not in accepted:
+        kwargs.pop("loss_type", None)
     config = SFTConfig(**{k: v for k, v in kwargs.items() if k in accepted})
     trainer = SFTTrainer(
         model=model,
