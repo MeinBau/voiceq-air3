@@ -305,13 +305,33 @@ class HFBackend:
             dtype_kw = "dtype" if (_major, _minor) >= (4, 56) else "torch_dtype"
         except ValueError:
             dtype_kw = "dtype"
-        self.tokenizer = AutoTokenizer.from_pretrained(model)
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model,
-            **{dtype_kw: torch.bfloat16 if use_bf16 else torch.float16},
+        compute_dtype = torch.bfloat16 if use_bf16 else torch.float16
+        load_kwargs: dict = {
+            dtype_kw: compute_dtype,
             # 여러 장이어도 쪼개지 않는다 — 이유는 train_lora.py 주석 참고.
-            device_map={"": 0} if torch.cuda.is_available() else "auto",
-        )
+            "device_map": {"": 0} if torch.cuda.is_available() else "auto",
+        }
+        # GPU가 있으면 학습·배포와 같은 4bit로 올린다. 두 가지 이유다.
+        #
+        # 하나, 기획서 3-다가 요구하는 구성이 4bit(2~4GB)이므로 fp16으로 재보면 실제
+        # 배포될 모델이 아닌 것을 재게 된다.
+        #
+        # 둘, fp16으로 올리면 대상 모듈이 평범한 nn.Linear라서 PEFT가 어댑터를 끼울 때
+        # torchao 디스패처를 먼저 시도하는데, PEFT의 is_torchao_available()은 torchao가
+        # 낮은 버전으로 깔려 있으면 False를 돌려주는 대신 ImportError를 던진다.
+        # Kaggle 이미지에 torchao 0.10.0이 미리 깔려 있어 여기서 죽었다(PEFT 요구는
+        # 0.16 초과). 4bit로 올리면 bnb 디스패처가 먼저 매칭되어 그 경로를 타지 않는다.
+        if torch.cuda.is_available():
+            from transformers import BitsAndBytesConfig
+            load_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=compute_dtype,
+                bnb_4bit_use_double_quant=True,
+            )
+
+        self.tokenizer = AutoTokenizer.from_pretrained(model)
+        self.model = AutoModelForCausalLM.from_pretrained(model, **load_kwargs)
         if adapter:
             from peft import PeftModel
             self.model = PeftModel.from_pretrained(self.model, adapter)
