@@ -241,26 +241,44 @@ python finetune/train_lora.py --model Qwen/Qwen2.5-3B-Instruct \
     --out <adapter의 상위 폴더> --merge ./merged
 ```
 
-### 8.2 서빙
+### 8.2 서빙 — Ollama (권장)
 
-**vLLM (GPU 서버 — 부대 내 온프레미스 목표 구성)**
+Ollama는 safetensors 폴더를 그대로 읽어 GGUF 변환과 양자화까지 한 번에 해 준다.
+llama.cpp를 따로 빌드할 필요가 없고, 텐서 단위로 스트리밍 처리하므로 RAM 8GB 정도의
+PC에서도 3B 병합본(fp16 약 6GB)을 다룰 수 있다.
+
+```bash
+# 1) merged 폴더를 가리키는 Modelfile 작성
+#    num_ctx는 우리 프롬프트 길이(FULL 약 1,550토큰)에 여유를 준 값이다.
+cat > Modelfile <<'EOF'
+FROM ./merged
+PARAMETER num_ctx 4096
+PARAMETER temperature 0
+EOF
+
+# 2) 4bit 양자화하며 등록 (3B Q4_K_M ≈ 2GB — 기획서 3-다 "4bit 2~4GB"에 부합)
+ollama create voicecue-qwen2.5-3b --quantize q4_K_M -f Modelfile
+
+# 3) 확인
+ollama list
+ollama run voicecue-qwen2.5-3b "테스트"
+```
+
+Windows에서는 설치 시 서비스가 자동으로 뜨므로 `ollama serve`를 따로 실행하지 않아도
+`http://localhost:11434`가 열려 있다. 채팅 템플릿은 병합본에 들어 있는
+`tokenizer_config.json`에서 자동으로 읽는다(`train_lora.py`의 merge가 토크나이저를 함께
+저장한다).
+
+### 8.2-b 서빙 — vLLM (GPU 서버)
+
+부대 내 GPU 서버처럼 VRAM이 넉넉하면 양자화 없이 그대로 올려도 된다.
 
 ```bash
 vllm serve ./merged --served-model-name voicecue-qwen2.5-3b --port 8000
 ```
 
-**Ollama (GPU가 작거나 없는 PC)** — GGUF로 변환해서 올린다. 3B Q4_K_M이 약 2GB라
-기획서 3-다의 "4bit 2~4GB"에 부합하고, VRAM이 부족하면 CPU로도 돈다.
-
-```bash
-python llama.cpp/convert_hf_to_gguf.py ./merged --outfile voicecue.gguf --outtype f16
-./llama.cpp/llama-quantize voicecue.gguf voicecue-q4.gguf Q4_K_M
-printf 'FROM ./voicecue-q4.gguf\n' > Modelfile
-ollama create voicecue-qwen2.5-3b -f Modelfile
-```
-
-**서빙 이름을 `voicecue-`로 시작하게 맞추는 것이 중요하다.** 앱이 이 이름을 보고
-few-shot을 생략할지 정한다(`llm_engine.is_finetuned`).
+**어느 쪽이든 서빙 이름을 `voicecue-`로 시작하게 맞추는 것이 중요하다.** 앱이 이 이름을
+보고 few-shot을 생략할지 정한다(`llm_engine.is_finetuned`).
 
 ### 8.3 앱에서 선택
 
