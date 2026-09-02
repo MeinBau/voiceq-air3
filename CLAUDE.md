@@ -246,7 +246,7 @@ voice-cue/
 | Whisper 음성 입력 STT | ✅ 완료 — 텍스트 입력과 별개의 UI, `OPENAI_API_KEY` 필요 (`modules/stt.py`) |
 | 파인튜닝 학습 데이터셋 구축 (기획서 3-나 1단계 "500건 이상") | ✅ 완료 — 1,527턴 / 3,054 SFT 샘플 (`finetune/gen_dataset.py`) |
 | 파인튜닝 평가 하네스 (기획서 3-라 4개 지표 / 4-다③) | ✅ 완료 — gold 자기검증 100% 통과 (`finetune/evaluate.py`) |
-| sLLM LoRA 학습 (기획서 4-다②) | ✅ Kaggle T4 x2에서 Qwen2.5-1.5B 1에폭 완주 (152스텝 33분, eval_loss 0.084). 개발 PC GPU(GTX 970, CC 5.2)로는 QLoRA 불가하므로 `finetune/kaggle_train.ipynb`를 Save & Run All로 실행 |
+| sLLM LoRA 학습 (기획서 4-다②) | ✅ Kaggle T4 x2에서 Qwen2.5-1.5B 1에폭 완주 (152스텝 33분). **튜닝 효과 실측: 상황유형 정확도 45%→75%, 키워드 정확도 60.6%→84.9%** (`finetune/README.md` 4절). 개발 PC GPU(GTX 970)로는 불가하므로 `finetune/kaggle_train.ipynb`를 Save & Run All로 실행 |
 
 ---
 

@@ -333,6 +333,11 @@ class HFBackend:
         self.tokenizer = AutoTokenizer.from_pretrained(model)
         self.model = AutoModelForCausalLM.from_pretrained(model, **load_kwargs)
         if adapter:
+            # GPU가 없어 4bit로 못 올린 경우(CPU 평가)에는 대상이 평범한 nn.Linear라
+            # PEFT가 torchao 디스패처를 먼저 시도하다 버전 검사에서 죽을 수 있다.
+            # 미리 막아 둔다 — 자세한 내용은 finetune/compat.py 참고.
+            from finetune import compat
+            compat.patch_peft_torchao_check()
             from peft import PeftModel
             self.model = PeftModel.from_pretrained(self.model, adapter)
         self.model.eval()

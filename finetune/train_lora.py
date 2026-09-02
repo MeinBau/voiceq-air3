@@ -35,7 +35,13 @@ import argparse
 import json
 import os
 import statistics
+import sys
 from pathlib import Path
+
+# finetune 패키지(compat 등)를 어디서 실행하든 임포트할 수 있게 저장소 루트를 넣는다.
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 DEFAULT_MODEL = "Qwen/Qwen2.5-3B-Instruct"
@@ -46,6 +52,23 @@ def load_sft(split: str) -> list[dict]:
     if not path.exists():
         raise SystemExit(f"{path} 가 없습니다. 먼저 python finetune/gen_dataset.py 를 실행하세요.")
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+def _dtype_kwarg() -> str:
+    """from_pretrained에 dtype을 넘길 때 쓸 인자 이름.
+
+    transformers 4.56에서 torch_dtype -> dtype으로 바뀌었다. 옛 이름을 쓰면
+    "torch_dtype is deprecated!" 경고만 뜨고 요청한 dtype이 반영되지 않을 수 있는데,
+    Qwen2.5의 config.json은 torch_dtype이 bfloat16이라 반영이 안 되면 모델이 통째로
+    bf16으로 올라온다 — T4에서는 에뮬레이션이라 느리고, 어댑터까지 bf16이 되면
+    fp16 GradScaler가 기울기를 못 다뤄 학습이 죽는다.
+    """
+    import transformers
+    try:
+        major, minor = (int(x) for x in transformers.__version__.split(".")[:2])
+    except ValueError:
+        return "dtype"
+    return "dtype" if (major, minor) >= (4, 56) else "torch_dtype"
 
 
 def _estimate_tokens(text: str) -> int:
@@ -158,17 +181,8 @@ def train(args: argparse.Namespace) -> None:
         effective = args.batch_size * args.grad_accum * world_size
         print(f"[train] DDP {world_size}개 프로세스 · 실효 배치 "
               f"{args.batch_size}x{args.grad_accum}x{world_size} = {effective}")
-    # from_pretrained의 dtype 인자 이름이 transformers 4.56에서 torch_dtype -> dtype으로
-    # 바뀌었다. 옛 이름을 쓰면 "torch_dtype is deprecated!" 경고만 뜨고 원하는 dtype이
-    # 확실히 반영되지 않을 수 있는데, Qwen2.5의 config.json은 torch_dtype이 bfloat16이라
-    # 반영이 안 되면 모델이 통째로 bf16으로 올라온다 — T4에서는 에뮬레이션이라 느리고,
-    # 어댑터까지 bf16이 되면 fp16 GradScaler가 기울기를 못 다뤄 죽는다.
     import transformers
-    try:
-        _major, _minor = (int(x) for x in transformers.__version__.split(".")[:2])
-        _dtype_kw = "dtype" if (_major, _minor) >= (4, 56) else "torch_dtype"
-    except ValueError:
-        _dtype_kw = "dtype"
+    _dtype_kw = _dtype_kwarg()
     model = AutoModelForCausalLM.from_pretrained(
         args.model, quantization_config=quant_config, device_map=device_map,
         **{_dtype_kw: compute_dtype},
@@ -305,14 +319,46 @@ def merge(args: argparse.Namespace) -> None:
     병합은 fp16으로 해야 하며(4bit 로드 상태에서는 병합할 수 없다), 병합 후 서빙
     단계에서 다시 4bit/GGUF로 양자화해 기획서의 2~4GB 목표를 맞춘다.
     """
+    from finetune import compat
+
+    # 사전 조건은 무거운 임포트(torch/transformers)보다 먼저 본다. 어댑터가 없거나
+    # 디스크가 모자란 것을 몇 십 초 기다린 뒤에 알 이유가 없다.
+    adapter_dir = args.out / "adapter"
+    if not (adapter_dir / "adapter_config.json").exists():
+        raise SystemExit(
+            f"어댑터가 없습니다: {adapter_dir}\n"
+            "먼저 학습을 끝내야 병합할 수 있습니다 (train_lora.py를 --merge 없이 실행)."
+        )
+
+    # 병합본은 fp16 통짜라 1.5B가 약 3GB, 3B가 약 6GB다. 디스크가 모자라면 절반쯤
+    # 쓰다가 죽어 쓸모없는 파일만 남으므로 미리 확인한다.
+    params_b = 1.5
+    for hint, size in (("0.5b", 0.5), ("1.5b", 1.5), ("3b", 3.0), ("7b", 7.0)):
+        if hint in args.model.lower():
+            params_b = size
+    need_gb = params_b * 2 * 1.15   # fp16 2바이트/파라미터 + 여유
+    args.merge.parent.mkdir(parents=True, exist_ok=True)
+    free_gb = compat.free_disk_gb(str(args.merge.parent))
+    print(f"[merge] 예상 필요 용량 {need_gb:.1f}GB · 여유 {free_gb:.1f}GB")
+    if free_gb < need_gb:
+        raise SystemExit(
+            f"디스크 여유가 부족합니다 (필요 {need_gb:.1f}GB, 남음 {free_gb:.1f}GB).\n"
+            f"중간 체크포인트를 지우면 확보됩니다: rm -rf {args.out}/checkpoint-*"
+        )
+
     import torch
-    from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
+    # 베이스를 fp16으로 올려야 병합이 된다(4bit 가중치에는 LoRA를 합칠 수 없다).
+    # 그러면 대상이 평범한 nn.Linear라서 PEFT가 torchao 디스패처를 먼저 시도하는데,
+    # 그 버전 검사가 예외를 던지는 환경이 있어 미리 막아 둔다. 자세한 내용은 compat 참고.
+    compat.patch_peft_torchao_check()
+    from peft import PeftModel
+
     base = AutoModelForCausalLM.from_pretrained(
-        args.model, torch_dtype=torch.float16, device_map="cpu"
+        args.model, **{_dtype_kwarg(): torch.float16}, device_map="cpu"
     )
-    merged = PeftModel.from_pretrained(base, args.out / "adapter").merge_and_unload()
+    merged = PeftModel.from_pretrained(base, adapter_dir).merge_and_unload()
     merged.save_pretrained(args.merge)
     AutoTokenizer.from_pretrained(args.model).save_pretrained(args.merge)
     print(f"병합 저장: {args.merge}")
