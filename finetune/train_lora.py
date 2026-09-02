@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import statistics
 from pathlib import Path
 
@@ -139,12 +140,24 @@ def train(args: argparse.Namespace) -> None:
         bnb_4bit_compute_dtype=compute_dtype,
         bnb_4bit_use_double_quant=True,   # 기획서의 4bit 2~4GB 목표를 맞추기 위한 이중 양자화
     )
-    # GPU가 여러 장이어도 한 장에 통째로 올린다. device_map="auto"로 두면 Kaggle의
-    # T4 x2처럼 GPU가 둘일 때 모델을 층 단위로 쪼개 나눠 싣는데(모델 병렬), 1.5B~3B는
-    # 한 장(16GB)에 4bit로 충분히 들어가므로 쪼갤 이유가 없다. 쪼개면 층마다 GPU 간
-    # 전송이 생기고 두 GPU가 번갈아 놀아서 오히려 느려진다. 데이터 병렬로 두 장을
-    # 제대로 쓰려면 accelerate launch --num_processes 2 가 필요하다.
-    device_map = {"": 0} if torch.cuda.is_available() else "auto"
+    # 모델은 항상 GPU 한 장에 통째로 올린다.
+    #
+    # device_map="auto"로 두면 GPU가 둘일 때 모델을 층 단위로 쪼개 나눠 싣는데(모델
+    # 병렬), 1.5B~3B는 한 장(16GB)에 4bit로 충분히 들어가므로 쪼갤 이유가 없다.
+    # 쪼개면 층마다 GPU 간 전송이 생기고 두 GPU가 번갈아 놀아서 오히려 느려진다.
+    #
+    # GPU 두 장을 제대로 쓰는 방법은 데이터 병렬(DDP)이다. 각 프로세스가 자기 GPU에
+    # 모델 전체를 하나씩 올리고 서로 다른 배치를 처리한 뒤 기울기만 주고받으므로
+    # 거의 장수에 비례해 빨라진다. accelerate launch로 띄우면 LOCAL_RANK가 들어오니
+    # 그 값을 보고 자기 몫의 GPU를 잡는다. 그냥 python으로 띄우면 LOCAL_RANK가 없어
+    # 0번 한 장을 쓴다(기존 동작과 동일).
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    device_map = {"": local_rank} if torch.cuda.is_available() else "auto"
+    world_size = int(os.environ.get("WORLD_SIZE", 1))
+    if world_size > 1:
+        effective = args.batch_size * args.grad_accum * world_size
+        print(f"[train] DDP {world_size}개 프로세스 · 실효 배치 "
+              f"{args.batch_size}x{args.grad_accum}x{world_size} = {effective}")
     model = AutoModelForCausalLM.from_pretrained(
         args.model, quantization_config=quant_config, device_map=device_map,
         torch_dtype=compute_dtype,
@@ -202,13 +215,17 @@ def train(args: argparse.Namespace) -> None:
         # 시스템 프롬프트가 길고 모든 샘플이 동일하다. 거기에 손실을 걸면 프롬프트
         # 암기에 용량이 쓰이므로 assistant 응답 구간에만 손실을 건다.
         completion_only_loss=True,
-        # trl 1.4부터 loss_type 기본값이 "chunked_nll"로 바뀌었다. 메모리를 아끼려고
-        # forward를 내부적으로 패치하는데, 이 패치가 4bit+PEFT+gradient checkpointing
-        # 조합에서 모델의 forward가 functools.partial로 감싸진 경우를 못 다뤄
-        # "'functools.partial' object has no attribute '__func__'"로 죽는다
-        # (Kaggle 실측: trl 1.12.0). "nll"로 명시해 예전 방식(패치 없음)을 쓴다 —
-        # 데이터가 짧아(p99 1681토큰) 메모리 절약 이득도 크지 않다.
-        loss_type="nll",
+        # trl 1.4부터 loss_type 기본값이 "chunked_nll"로 바뀌었다. logits를 통째로
+        # 만들지 않고 청크로 나눠 손실을 구해 메모리를 크게 아끼는데, 이 방식이
+        # forward를 내부적으로 패치하다가 모델의 forward가 functools.partial로 감싸진
+        # 경우를 못 다뤄 "'functools.partial' object has no attribute '__func__'"로
+        # 죽는다(Kaggle 실측: trl 1.12.0 + device_map="auto").
+        #
+        # 기본값을 "nll"(패치 없는 예전 방식)로 두어 확실히 돌게 한다. 다만 Qwen2.5는
+        # 어휘가 151936이라 nll은 logits를 fp32로 통째로 올리는 비용이 크다 —
+        # 배치를 키우고 싶으면 --loss-type chunked_nll 로 시도해 볼 값어치가 있다
+        # (단일 GPU로 바꾼 뒤로는 패치가 통과할 수도 있으나 아직 미검증).
+        loss_type=args.loss_type,
         report_to=[],
         seed=args.seed,
     )
@@ -274,6 +291,9 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--lora-r", type=int, default=16)
     ap.add_argument("--max-seq-len", type=int, default=2048)
+    ap.add_argument("--loss-type", default="nll", choices=["nll", "chunked_nll"],
+                    help="chunked_nll은 어휘가 큰 모델에서 메모리를 크게 아끼지만 "
+                         "trl 1.12에서 4bit+PEFT 조합과 충돌한 전력이 있다. 기본값 nll이 안전.")
     ap.add_argument("--save-steps", type=int, default=25,
                     help="체크포인트 저장 주기(스텝). 세션이 끊기거나 죽어도 여기까지는 "
                          "남아 --resume으로 이어갈 수 있다. 평가는 이 값의 2배 주기로 돈다.")
