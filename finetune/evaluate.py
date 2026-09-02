@@ -296,10 +296,19 @@ class HFBackend:
         # 연산 능력을 직접 보고 판단한다.
         capability = torch.cuda.get_device_capability() if torch.cuda.is_available() else (0, 0)
         use_bf16 = capability[0] >= 8
+        # dtype 인자 이름이 transformers 4.56에서 torch_dtype -> dtype으로 바뀌었다.
+        # 옛 이름은 경고만 내고 반영되지 않을 수 있어 버전에 맞는 이름으로 넘긴다
+        # (자세한 배경은 train_lora.py 주석 참고).
+        import transformers
+        try:
+            _major, _minor = (int(x) for x in transformers.__version__.split(".")[:2])
+            dtype_kw = "dtype" if (_major, _minor) >= (4, 56) else "torch_dtype"
+        except ValueError:
+            dtype_kw = "dtype"
         self.tokenizer = AutoTokenizer.from_pretrained(model)
         self.model = AutoModelForCausalLM.from_pretrained(
             model,
-            torch_dtype=torch.bfloat16 if use_bf16 else torch.float16,
+            **{dtype_kw: torch.bfloat16 if use_bf16 else torch.float16},
             # 여러 장이어도 쪼개지 않는다 — 이유는 train_lora.py 주석 참고.
             device_map={"": 0} if torch.cuda.is_available() else "auto",
         )

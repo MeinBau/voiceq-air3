@@ -158,11 +158,32 @@ def train(args: argparse.Namespace) -> None:
         effective = args.batch_size * args.grad_accum * world_size
         print(f"[train] DDP {world_size}개 프로세스 · 실효 배치 "
               f"{args.batch_size}x{args.grad_accum}x{world_size} = {effective}")
+    # from_pretrained의 dtype 인자 이름이 transformers 4.56에서 torch_dtype -> dtype으로
+    # 바뀌었다. 옛 이름을 쓰면 "torch_dtype is deprecated!" 경고만 뜨고 원하는 dtype이
+    # 확실히 반영되지 않을 수 있는데, Qwen2.5의 config.json은 torch_dtype이 bfloat16이라
+    # 반영이 안 되면 모델이 통째로 bf16으로 올라온다 — T4에서는 에뮬레이션이라 느리고,
+    # 어댑터까지 bf16이 되면 fp16 GradScaler가 기울기를 못 다뤄 죽는다.
+    import transformers
+    try:
+        _major, _minor = (int(x) for x in transformers.__version__.split(".")[:2])
+        _dtype_kw = "dtype" if (_major, _minor) >= (4, 56) else "torch_dtype"
+    except ValueError:
+        _dtype_kw = "dtype"
     model = AutoModelForCausalLM.from_pretrained(
         args.model, quantization_config=quant_config, device_map=device_map,
-        torch_dtype=compute_dtype,
+        **{_dtype_kw: compute_dtype},
     )
     model.config.use_cache = False
+
+    # 의도한 dtype이 실제로 반영됐는지 바로 확인한다. 여기서 bfloat16이 찍히면
+    # T4에서는 느린 에뮬레이션 경로로 돌고 있다는 뜻이므로 그냥 두면 안 된다.
+    loaded_dtype = next(
+        (p.dtype for p in model.parameters() if p.dtype.is_floating_point), None
+    )
+    print(f"[train] 모델 적재 dtype {loaded_dtype} (요청 {compute_dtype})")
+    if loaded_dtype is not None and loaded_dtype != compute_dtype:
+        print(f"[train] 경고: 요청한 dtype이 반영되지 않았습니다 "
+              f"(transformers {transformers.__version__}, 인자명 {_dtype_kw}).")
 
     peft_config = LoraConfig(
         r=args.lora_r,
@@ -246,6 +267,22 @@ def train(args: argparse.Namespace) -> None:
         processing_class=tokenizer,
         peft_config=peft_config,
     )
+
+    # fp16 AMP의 GradScaler는 bf16 기울기를 다루지 못한다. 학습 대상(LoRA 어댑터)이
+    # 어떤 경로로든 bf16으로 만들어지면 첫 기울기 갱신에서
+    #   NotImplementedError: "_amp_foreach_non_finite_check_and_unscale_cuda"
+    #                        not implemented for 'BFloat16'
+    # 로 죽는다(Kaggle T4 x2 DDP 실측). QLoRA 표준 관행대로 학습 파라미터는 fp32로
+    # 고정해 둔다 — 수치 안정성에도 이 편이 낫고, 어댑터만이라 메모리 부담도 없다.
+    # 옵티마이저는 trainer.train() 안에서 만들어지므로 지금 바꿔도 안전하다.
+    recast = 0
+    for param in trainer.model.parameters():
+        if param.requires_grad and param.dtype != torch.float32:
+            param.data = param.data.to(torch.float32)
+            recast += 1
+    trainable = sum(p.numel() for p in trainer.model.parameters() if p.requires_grad)
+    print(f"[train] 학습 파라미터 {trainable / 1e6:.1f}M "
+          f"(fp32로 캐스팅한 텐서 {recast}개)")
     # Colab 무료 티어는 세션이 끊길 수 있다. 에폭마다 저장해 두고, 체크포인트가 있으면
     # 처음부터 다시 돌리지 않고 이어서 학습한다.
     checkpoints = sorted(args.out.glob("checkpoint-*")) if args.out.exists() else []
