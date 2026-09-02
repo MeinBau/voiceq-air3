@@ -304,6 +304,76 @@ python finetune/evaluate.py --backend openai \
     --base-url http://localhost:8000/v1 --model voicecue-qwen2.5-3b
 ```
 
+### 8.5 로컬 말고 다른 데서 돌리기
+
+이 PC(GTX 970 4GB, RAM 8GB)로도 3B Q4는 돌지만 느리다. 아래 방법은 전부 앱 코드를
+건드리지 않는다 — 공급자를 "직접 세운 서버"로 두고 secrets의 세 값만 바꾸면 된다.
+
+```toml
+# .streamlit/secrets.toml
+LOCAL_BASE_URL = "https://<엔드포인트 주소>/v1"
+LOCAL_API_KEY  = "<필요한 경우에만>"
+LOCAL_TIMEOUT  = 180          # scale-to-zero 콜드 스타트가 있으면 넉넉히
+```
+
+#### 먼저 할 일 — Hugging Face Hub에 올리기
+
+어느 방법을 쓰든 모델이 인터넷에서 접근 가능해야 편하다. **private 저장소**로 올리면
+6GB 파일을 매번 들고 다닐 필요가 없다.
+
+```bash
+pip install huggingface_hub
+huggingface-cli login
+huggingface-cli upload <계정>/voicecue-qwen2.5-3b ./merged --private
+```
+
+#### 방법 비교
+
+| 방법 | 비용 | 안정성 | 준비 시간 | 적합 |
+|---|---|---|---|---|
+| Colab/Kaggle + 터널 | 무료 | 세션 끊김 있음 | 15분 | 개발·테스트 |
+| HF Inference Endpoints | 분 단위 과금, scale-to-zero | 높음 | 20분 | **시연 당일** |
+| RunPod / Vast.ai | 시간당 저렴 | 높음 | 30분 | 장시간 실험 |
+| 사내·학교 GPU 서버 | 무료 | 환경에 따름 | — | 접근 가능하면 최선 |
+
+#### A. Colab / Kaggle + 터널 (무료, 테스트용)
+
+이미 쓰던 노트북 환경에 vLLM을 띄우고 터널로 밖에 노출한다. 세션이 끊기면 주소가
+바뀌므로 시연 당일에 의존하기엔 위험하다.
+
+```python
+!pip install -q vllm
+!nohup vllm serve <계정>/voicecue-qwen2.5-3b \
+    --served-model-name voicecue-qwen2.5-3b --port 8000 &
+# cloudflared로 외부 주소 발급 (계정 불필요)
+!wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O cloudflared
+!chmod +x cloudflared && ./cloudflared tunnel --url http://localhost:8000
+```
+
+출력된 `https://...trycloudflare.com` 주소 뒤에 `/v1`을 붙여 `LOCAL_BASE_URL`에 넣는다.
+
+#### B. HF Inference Endpoints (시연 권장)
+
+Hub에 올린 모델 페이지에서 **Deploy → Inference Endpoints**. TGI 컨테이너로 뜨면
+`/v1/chat/completions`가 OpenAI 호환으로 열린다. 분 단위 과금이고 **scale-to-zero**로
+두면 안 쓸 때는 요금이 붙지 않는다 — 시연 몇 시간만 쓰면 비용이 적다.
+
+- `LOCAL_BASE_URL` = 엔드포인트 URL + `/v1`
+- `LOCAL_API_KEY` = HF 액세스 토큰
+- `LOCAL_TIMEOUT` = `180` (scale-to-zero는 첫 요청에서 컨테이너가 깨어나느라 오래 걸린다)
+
+#### C. RunPod / Vast.ai
+
+GPU를 시간당 빌려 vLLM을 직접 띄운다. 8.2-b의 명령을 그대로 쓰고, 포트를 공개한 뒤
+그 주소를 `LOCAL_BASE_URL`에 넣는다. 결제수단 등록이 필요하다.
+
+#### 기획서 서술과의 관계
+
+클라우드에서 돌린다고 해서 "폐쇄망 온프레미스" 주장이 약해지지는 않는다. 핵심은
+**모델이 3B/4bit라 부대 서버 한 대(기획서 3-다: 10~12GB)에 들어간다**는 점이고,
+클라우드는 시연 편의를 위한 것일 뿐 같은 가중치를 부대 서버에 올리면 그대로 돈다.
+심사에서 물어보면 그렇게 답하면 되고, 8.2절의 Ollama 구성이 그 증거다.
+
 ## 9. 알려진 한계
 
 - **합성 데이터다.** 기획서 4-다①이 말한 "실제 회의록·작전상황일지"가 아니라

@@ -250,7 +250,9 @@ with st.sidebar:
         key="provider",
         format_func=lambda p: engine.PROVIDERS[p]["label"],
         on_change=_on_provider_change,
-        help="폐쇄망 전환 시 '로컬 서버'로 바꾸면 됩니다. 코드 수정 없이 base_url만 바뀝니다.",
+        help="파인튜닝한 모델을 쓰려면 '직접 세운 서버'를 고릅니다. 같은 PC의 Ollama든 "
+             "부대 내 vLLM이든 클라우드 엔드포인트든, secrets의 LOCAL_BASE_URL만 바꾸면 "
+             "코드 수정 없이 붙습니다.",
     )
 
     if st.button("모델 목록 조회", use_container_width=True):

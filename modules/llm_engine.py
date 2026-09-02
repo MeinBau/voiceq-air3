@@ -55,8 +55,12 @@ PROVIDERS = {
         "secret_key": "OPENAI_API_KEY",
         "needs_key": True,
     },
+    # 이름은 "로컬"이지만 실제로는 우리가 직접 세운 OpenAI 호환 엔드포인트 전부를
+    # 가리킨다 — 같은 PC의 Ollama, 부대 내 vLLM 서버, 클라우드에 올린 추론
+    # 엔드포인트가 모두 여기로 붙는다. secrets의 LOCAL_BASE_URL로 주소를 바꾸고,
+    # 키가 필요한 곳이면 LOCAL_API_KEY를 함께 넣는다.
     "local": {
-        "label": "로컬 서버 (Ollama / vLLM) — 폐쇄망 목표 구성",
+        "label": "직접 세운 서버 (Ollama / vLLM / 클라우드 엔드포인트)",
         "base_url": "http://localhost:11434/v1",
         "secret_key": "LOCAL_API_KEY",
         "needs_key": False,
@@ -240,11 +244,19 @@ def get_runtime() -> tuple[Callable[[], openai.OpenAI], str, dict | None]:
         provider_id == "local"
     ) else provider["base_url"]
 
+    # 기본 40초는 상시 떠 있는 서버 기준이다. 클라우드 추론 엔드포인트를 scale-to-zero로
+    # 두면 첫 요청에서 컨테이너가 깨어나느라 1~3분이 걸려 40초로는 무조건 실패한다.
+    # 그런 구성에서는 secrets에 LOCAL_TIMEOUT을 넉넉히(예: 180) 넣는다.
+    try:
+        timeout = float(st.secrets.get("LOCAL_TIMEOUT", 40.0))
+    except (TypeError, ValueError):
+        timeout = 40.0
+
     def make_client() -> openai.OpenAI:
         return openai.OpenAI(
             base_url=base_url,
             api_key=api_key or "not-needed",  # 로컬 서버는 키를 요구하지 않는다.
-            timeout=40.0,
+            timeout=timeout,
         )
 
     model = st.session_state.get("selected_model") or st.secrets.get(
