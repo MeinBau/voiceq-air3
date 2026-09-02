@@ -121,12 +121,17 @@ def train(args: argparse.Namespace) -> None:
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # bf16은 Ampere(SM 80) 이상에서만 된다. Colab 무료 티어의 T4는 Turing(SM 75)이라
-    # bf16을 지원하지 않아, 그대로 두면 학습이 시작도 못 하고 죽는다. GPU를 보고 고른다.
-    use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+    # bf16 텐서코어는 Ampere(SM 80)부터다. torch.cuda.is_bf16_supported()를 쓰면 안 된다 —
+    # 이 함수는 including_emulation이 기본 True라 T4(Turing, SM 75)에서도 True를 돌려준다.
+    # 그러면 가속 경로가 없는 에뮬레이션 bf16으로 떨어져 학습이 몇 배 느려진다(Kaggle
+    # T4 실측: 135초/스텝). 연산 능력을 직접 보고 8.0 미만이면 fp16을 쓴다.
+    capability = torch.cuda.get_device_capability() if torch.cuda.is_available() else (0, 0)
+    use_bf16 = capability[0] >= 8
     compute_dtype = torch.bfloat16 if use_bf16 else torch.float16
     gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
-    print(f"[train] {gpu_name} · 연산 dtype {('bfloat16' if use_bf16 else 'float16')}")
+    n_gpu = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    print(f"[train] {gpu_name} (SM {capability[0]}.{capability[1]}, {n_gpu}개) · "
+          f"연산 dtype {'bfloat16' if use_bf16 else 'float16'}")
 
     quant_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -134,8 +139,14 @@ def train(args: argparse.Namespace) -> None:
         bnb_4bit_compute_dtype=compute_dtype,
         bnb_4bit_use_double_quant=True,   # 기획서의 4bit 2~4GB 목표를 맞추기 위한 이중 양자화
     )
+    # GPU가 여러 장이어도 한 장에 통째로 올린다. device_map="auto"로 두면 Kaggle의
+    # T4 x2처럼 GPU가 둘일 때 모델을 층 단위로 쪼개 나눠 싣는데(모델 병렬), 1.5B~3B는
+    # 한 장(16GB)에 4bit로 충분히 들어가므로 쪼갤 이유가 없다. 쪼개면 층마다 GPU 간
+    # 전송이 생기고 두 GPU가 번갈아 놀아서 오히려 느려진다. 데이터 병렬로 두 장을
+    # 제대로 쓰려면 accelerate launch --num_processes 2 가 필요하다.
+    device_map = {"": 0} if torch.cuda.is_available() else "auto"
     model = AutoModelForCausalLM.from_pretrained(
-        args.model, quantization_config=quant_config, device_map="auto",
+        args.model, quantization_config=quant_config, device_map=device_map,
         torch_dtype=compute_dtype,
     )
     model.config.use_cache = False
@@ -164,8 +175,23 @@ def train(args: argparse.Namespace) -> None:
         lr_scheduler_type="cosine",
         warmup_ratio=0.03,
         logging_steps=10,
-        eval_strategy="epoch",
-        save_strategy="epoch",
+        # 평가 배치를 학습 배치와 같게 맞춘다. TrainingArguments 기본값이 8이라
+        # 그냥 두면 평가 때만 배치가 4배로 뛴다. Qwen2.5는 어휘가 15만이라
+        # loss 계산이 logits를 fp32로 올리는데(logits.float()), 배치 8 × 길이 2048 ×
+        # 어휘 151936 × 4바이트 = 약 10GB가 한 번에 잡혀 T4 16GB에서 터진다.
+        # Kaggle 실측: 1에폭 끝 평가 진입 직후 CUDA unspecified launch failure로 사망.
+        per_device_eval_batch_size=args.batch_size,
+        # 평가에서 logits/labels를 모아둘 이유가 없다. loss만 받으면 되므로 켜서
+        # 평가 스텝마다 쌓이는 메모리를 없앤다.
+        prediction_loss_only=True,
+        # 에폭이 아니라 스텝 단위로 저장한다. 에폭 단위로 두면 transformers가
+        # _maybe_log_save_evaluate에서 "평가 먼저, 저장 나중" 순서로 도는데,
+        # 위의 평가가 터지면 저장에 도달하지 못해 그때까지의 학습이 통째로 날아간다
+        # (Kaggle 실측: 5시간 50분치 손실). 주기적으로 저장해 두면 --resume이 살아난다.
+        eval_strategy="steps",
+        eval_steps=args.save_steps * 2,
+        save_strategy="steps",
+        save_steps=args.save_steps,
         save_total_limit=2,
         bf16=use_bf16,
         fp16=not use_bf16,
@@ -248,6 +274,9 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--lora-r", type=int, default=16)
     ap.add_argument("--max-seq-len", type=int, default=2048)
+    ap.add_argument("--save-steps", type=int, default=25,
+                    help="체크포인트 저장 주기(스텝). 세션이 끊기거나 죽어도 여기까지는 "
+                         "남아 --resume으로 이어갈 수 있다. 평가는 이 값의 2배 주기로 돈다.")
     ap.add_argument("--seed", type=int, default=20260829)
     ap.add_argument("--dry-run", action="store_true",
                     help="torch 없이 데이터셋 스키마와 토큰 길이만 점검한다.")

@@ -290,14 +290,18 @@ class HFBackend:
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        # 학습 쪽과 같은 이유로 GPU를 보고 dtype을 고른다. T4(Turing)는 bf16 가속이
-        # 없어 그대로 두면 추론이 비정상적으로 느려지거나 커널이 없다며 실패한다.
-        use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+        # 학습 쪽(train_lora.py)과 같은 규칙. torch.cuda.is_bf16_supported()는
+        # including_emulation 기본값이 True라 T4(SM 75)에서도 True를 돌려주고,
+        # 그러면 가속 경로가 없는 에뮬레이션 bf16으로 떨어져 추론이 크게 느려진다.
+        # 연산 능력을 직접 보고 판단한다.
+        capability = torch.cuda.get_device_capability() if torch.cuda.is_available() else (0, 0)
+        use_bf16 = capability[0] >= 8
         self.tokenizer = AutoTokenizer.from_pretrained(model)
         self.model = AutoModelForCausalLM.from_pretrained(
             model,
             torch_dtype=torch.bfloat16 if use_bf16 else torch.float16,
-            device_map="auto",
+            # 여러 장이어도 쪼개지 않는다 — 이유는 train_lora.py 주석 참고.
+            device_map={"": 0} if torch.cuda.is_available() else "auto",
         )
         if adapter:
             from peft import PeftModel
