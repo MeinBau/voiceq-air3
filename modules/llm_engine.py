@@ -70,6 +70,12 @@ DEFAULT_MODEL = "poolside/laguna-xs-2.1:free"
 # 하위 호환 — 기존 secrets.toml의 QWEN_MODEL 키를 쓰던 설정을 위해 유지.
 DEFAULT_QWEN_MODEL = DEFAULT_MODEL
 
+# finetune/ 파이프라인으로 학습한 모델을 서빙할 때 쓸 이름. vLLM은
+# --served-model-name, Ollama는 모델 태그를 이 이름으로 맞춘다.
+# 이 이름이 들어 있으면 앱이 few-shot을 생략한다(is_finetuned 참고).
+FINETUNED_MODEL = "voicecue-qwen2.5-3b"
+FINETUNED_MODEL_HINT = "voicecue"
+
 # 시연 당일 응답이 느리면 사이드바에서 즉시 바꿔볼 수 있도록. 아래는 실측 결과다.
 #   laguna-xs   FAST 2.25초 / 위치정확도 2-3      ← 기본값
 #   laguna-s    FAST 7.62초 / 위치정확도 3-3, 다만 사태 ID를 "사건N"으로 이탈하는 경우 있음
@@ -94,10 +100,24 @@ PROVIDER_MODELS = {
         ["gpt-4.1-mini", "gpt-4o-mini", "gpt-4.1", "gpt-4o"],
     ),
     "local": (
-        "qwen2.5:7b-instruct",
-        ["qwen2.5:7b-instruct", "qwen2.5:14b-instruct", "gemma2:9b", "llama3.1:8b"],
+        FINETUNED_MODEL,
+        [FINETUNED_MODEL, "qwen2.5:7b-instruct", "qwen2.5:14b-instruct", "llama3.1:8b"],
     ),
 }
+
+
+def is_finetuned(model: str) -> bool:
+    """우리가 파인튜닝한 모델인지. few-shot을 보낼지 말지를 이걸로 정한다.
+
+    finetune/ 파이프라인은 few-shot 예시 없이 학습한다(gen_dataset.py 기본값).
+    파인튜닝의 목적 자체가 긴 예시 없이도 형식을 지키게 만들어 입력 토큰과 지연을
+    줄이는 것이기 때문이다 — 실측 절감은 FAST 20.1%, FULL 40.4%. 그러므로 이 모델에
+    few-shot을 그대로 보내면 학습 때 본 적 없는 입력을 주는 셈이라 손해다.
+
+    모델 이름으로 판별한다. 서빙할 때 --served-model-name을 아래 이름으로 맞추면 되고,
+    앱에서는 사이드바 체크박스로 언제든 뒤집을 수 있다.
+    """
+    return FINETUNED_MODEL_HINT in model.lower()
 
 
 def default_model_for(provider_id: str) -> str:

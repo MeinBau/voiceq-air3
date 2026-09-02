@@ -222,20 +222,69 @@ T4 두 장이 잡히면 노트북이 자동으로 데이터 병렬(DDP)로 두 �
 
 VRAM이 모자라면 `--model Qwen/Qwen2.5-1.5B-Instruct --batch-size 1 --grad-accum 16`.
 
-## 8. 서빙 전환 — 코드 수정 없음
+## 8. 학습한 모델을 앱에 연결하기
 
-`merge`로 만든 통짜 가중치를 vLLM 또는 Ollama로 올린 뒤, 앱 사이드바에서 공급자를
-**"로컬 서버 (Ollama / vLLM)"** 로 바꾸면 끝이다. `modules/llm_engine.py`의 `PROVIDERS`가
-`base_url`만 갈아끼우도록 이미 설계돼 있어 코드 변경이 없다.
+### 8.1 산출물 내려받기
+
+Kaggle 노트북 버전의 **Output** 탭에서 `finetune/out/` 아래를 받는다.
+
+| 받을 것 | 용도 |
+|---|---|
+| `merged/` | 서빙용 통짜 가중치(fp16). vLLM/Ollama에 올린다 |
+| `adapter/` | LoRA 어댑터만(수십 MB). 베이스와 함께 쓰거나 재병합할 때 |
+| `comparison.txt` | 튜닝 전/후 지표 비교표 |
+
+병합이 실패했더라도 `adapter/`만 있으면 로컬에서 다시 병합할 수 있다(GPU 불필요, CPU로 돈다).
 
 ```bash
-vllm serve finetune/out/merged --served-model-name voicecue-qwen2.5-3b --port 8000
+python finetune/train_lora.py --model Qwen/Qwen2.5-3B-Instruct \
+    --out <adapter의 상위 폴더> --merge ./merged
+```
+
+### 8.2 서빙
+
+**vLLM (GPU 서버 — 부대 내 온프레미스 목표 구성)**
+
+```bash
+vllm serve ./merged --served-model-name voicecue-qwen2.5-3b --port 8000
+```
+
+**Ollama (GPU가 작거나 없는 PC)** — GGUF로 변환해서 올린다. 3B Q4_K_M이 약 2GB라
+기획서 3-다의 "4bit 2~4GB"에 부합하고, VRAM이 부족하면 CPU로도 돈다.
+
+```bash
+python llama.cpp/convert_hf_to_gguf.py ./merged --outfile voicecue.gguf --outtype f16
+./llama.cpp/llama-quantize voicecue.gguf voicecue-q4.gguf Q4_K_M
+printf 'FROM ./voicecue-q4.gguf\n' > Modelfile
+ollama create voicecue-qwen2.5-3b -f Modelfile
+```
+
+**서빙 이름을 `voicecue-`로 시작하게 맞추는 것이 중요하다.** 앱이 이 이름을 보고
+few-shot을 생략할지 정한다(`llm_engine.is_finetuned`).
+
+### 8.3 앱에서 선택
+
+사이드바에서 공급자를 **"로컬 서버 (Ollama / vLLM)"** 로 바꾸면 `base_url`만 갈아끼워
+붙는다. 모델 목록에서 `voicecue-qwen2.5-3b`를 고르면 **"파인튜닝 모델 (few-shot 생략)"**
+체크박스가 자동으로 켜진다.
+
+포트가 기본값과 다르면 `.streamlit/secrets.toml`에 `LOCAL_BASE_URL`을 넣는다
+(vLLM 기본 `http://localhost:8000/v1`, Ollama 기본 `http://localhost:11434/v1`).
+
+### 8.4 few-shot을 왜 빼는가
+
+학습 데이터를 few-shot 예시 없이 만들었다(`gen_dataset.py` 기본값). 파인튜닝의 목적이
+긴 예시 없이도 형식을 지키게 만드는 것이기 때문이다. 그래서 서빙할 때도 빼야 학습 때와
+같은 조건이 되고, 입력 토큰이 **FAST 20.1% · FULL 40.4%** 줄어 표출 지연에 직접 기여한다.
+
+튜닝하지 않은 모델에 이 체크박스를 켜면 형식이 무너지므로 꺼 두어야 한다. 반대로 평가
+스크립트로 베이스라인과 비교할 때는 **튜닝 전 모델에만 `--few-shot`을 켠다** — 양쪽에
+똑같이 켜면 이 절감 효과가 측정되지 않는다.
+
+```bash
 python finetune/evaluate.py --backend openai \
     --base-url http://localhost:8000/v1 --model voicecue-qwen2.5-3b
 ```
-
-베이스라인과 비교할 때는 **튜닝 전 모델에만 `--few-shot`을 켠다.** 튜닝 후에는 few-shot이
-필요 없어지는 것 자체가 성과이므로, 양쪽에 똑같이 켜면 절감 효과가 측정되지 않는다.
 
 ## 9. 알려진 한계
 

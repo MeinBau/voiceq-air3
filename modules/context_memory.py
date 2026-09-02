@@ -39,6 +39,10 @@ def init_session_state() -> None:
         "provider": engine.configured_provider(),
         "selected_model": engine.default_model_for(engine.configured_provider()),
         "model_options": [],
+        # 파인튜닝 모델(few-shot 없이 학습)을 쓸 때만 켠다. 기본 모델명을 보고 정한다.
+        "skip_few_shot": engine.is_finetuned(
+            engine.default_model_for(engine.configured_provider())
+        ),
     }
     for key, value in defaults.items():
         if key not in st.session_state:

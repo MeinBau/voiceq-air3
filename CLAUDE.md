@@ -31,7 +31,7 @@
 | 항목 | 원 기획서 | 프로토타입 단순화 | 구현 상태 |
 |---|---|---|---|
 | STT/화자분리 | 실시간 스트리밍 ASR + 화자분리 (GPU 8GB) | 화자 구분은 "화자 선택 드롭다운"(편제 기반)으로 대체. 음성은 실시간 스트리밍이 아니라 녹음 후 Whisper API 일괄 전사 | **구현 완료.** 텍스트 입력(기본)과 음성 녹음 입력(Whisper, 별도 UI)이 둘 다 존재 — 하나가 다른 하나를 대체하지 않음 (`app.py`, `modules/stt.py`) |
-| 판단/생성 모델 | 한국어 특화 sLLM 파인튜닝(LoRA, 4bit) | OpenRouter 무료 모델(`:free`)을 프롬프트 엔지니어링 + Few-shot으로 대체 | **구현 완료.** 다만 공급자를 OpenRouter/OpenAI/로컬(Ollama·vLLM 등) 중 사이드바에서 코드 수정 없이 전환 가능하도록 확장됨 (`modules/llm_engine.py`) |
+| 판단/생성 모델 | 한국어 특화 sLLM 파인튜닝(LoRA, 4bit) | 시연은 OpenRouter 무료 모델(`:free`) + 프롬프트 엔지니어링 + Few-shot | **구현 완료.** 공급자를 OpenRouter/OpenAI/로컬(Ollama·vLLM) 중 사이드바에서 전환 가능 (`modules/llm_engine.py`). **원안대로의 LoRA 파인튜닝도 `finetune/`에 별도 구현**되어, 학습한 모델을 로컬 서버로 서빙하면 앱이 그대로 붙는다 (`finetune/README.md` 8절) |
 | CCTV PTZ 제어 | YOLO + REST API로 실제 카메라 제어 (GPU 24GB) | 판단 결과를 UI 텍스트/아이콘으로만 표시, 실제 하드웨어 연동 없음 | **구현 완료** (플레이북 기반 화면 선택 로직으로) |
 | 보안 격리 (Docker+Seccomp) | 코드 생성 후 격리 실행 | 프로토타입에서 제외 | 해당 없음 (프로토타입은 코드 생성/실행 기능 자체가 없음) |
 | 화면 조작 (pywinauto) | 실제 GUI 자동화 | Streamlit 컴포넌트 배치 시뮬레이션 | **구현 완료.** 단, LLM이 레이아웃 JSON을 직접 내지 않음 — 아래 6절 참고 |
@@ -226,6 +226,10 @@ voice-cue/
 7. **수동 보정 UI**: 사용자가 입력한 보정 문구를 `user_corrections`에 누적, 이후 모든
    FAST/FULL 프롬프트에 최우선 반영 지시로 주입 → "실수 반복 방지" 시연 포인트
 8. **모델/공급자 전환**: 사이드바에서 즉시 변경 가능, 코드 수정 불필요
+9. **파인튜닝 모델 연결**: 모델명이 `voicecue-`로 시작하면(`llm_engine.is_finetuned`)
+   사이드바의 "파인튜닝 모델 (few-shot 생략)"이 자동으로 켜지고, `run_utterance()`가
+   few-shot 예시를 빼고 호출한다. 학습 데이터를 few-shot 없이 만들었으므로 서빙도
+   같은 조건이어야 하며, 입력 토큰이 FAST 20.1%·FULL 40.4% 줄어든다
 
 ---
 
@@ -242,6 +246,7 @@ voice-cue/
 | 편제 기반 화자 영향력 가중치 | ✅ 완료 (원 기획서에는 없던 추가 구현) |
 | 전장상황도(SVG 지도) + 발언 기반 자동 아이콘 배치 | ✅ 완료 (원 기획서에는 없던 추가 구현) |
 | 다중 LLM 공급자 전환 (OpenRouter/OpenAI/로컬) | ✅ 완료 (원 기획서에는 없던 추가 구현) |
+| 파인튜닝 모델 앱 연결 (few-shot 자동 생략) | ✅ 완료 — `llm_engine.is_finetuned` + 사이드바 체크박스 (`finetune/README.md` 8절) |
 | 외부 접속 암호 보호 | ✅ 완료 (원 기획서에는 없던 추가 구현) |
 | Whisper 음성 입력 STT | ✅ 완료 — 텍스트 입력과 별개의 UI, `OPENAI_API_KEY` 필요 (`modules/stt.py`) |
 | 파인튜닝 학습 데이터셋 구축 (기획서 3-나 1단계 "500건 이상") | ✅ 완료 — 1,527턴 / 3,054 SFT 샘플 (`finetune/gen_dataset.py`) |

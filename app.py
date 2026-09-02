@@ -99,14 +99,20 @@ def run_utterance(speaker: str, utterance: str) -> None:
         operation_log=st.session_state.operation_log,
     )
 
+    # 파인튜닝 모델은 few-shot 없이 학습했다. 그대로 예시를 보내면 학습 때 본 적 없는
+    # 형태의 입력이 되고, 줄이려고 튜닝한 입력 토큰도 도로 늘어난다.
+    skip_few_shot = st.session_state.get("skip_few_shot", False)
+    fast_shots = [] if skip_few_shot else prompts.FAST_FEW_SHOT_MESSAGES
+    full_shots = [] if skip_few_shot else prompts.FULL_FEW_SHOT_MESSAGES
+
     result = engine.analyze_turn(
         client_factory=client_factory,
         model=model,
         fast_system=prompts.FAST_SYSTEM_PROMPT,
-        fast_few_shot=prompts.FAST_FEW_SHOT_MESSAGES,
+        fast_few_shot=fast_shots,
         fast_turn=fast_turn,
         full_system=prompts.FULL_SYSTEM_PROMPT,
-        full_few_shot=prompts.FULL_FEW_SHOT_MESSAGES,
+        full_few_shot=full_shots,
         full_turn=full_turn,
         extra_body=extra_body,
     )
@@ -264,6 +270,22 @@ with st.sidebar:
         options,
         key="selected_model",
         help="응답이 느리면 다른 모델로 바꿔 보세요. 목록은 수시로 바뀝니다.",
+    )
+
+    # 파인튜닝 모델은 few-shot 없이 학습했으므로 서빙할 때도 빼야 조건이 맞는다.
+    # 모델 이름으로 기본값만 잡아 주고, 최종 판단은 운용자가 뒤집을 수 있게 둔다 —
+    # 이름만 보고 자동으로 정해 버리면 다른 이름으로 서빙했을 때 조용히 어긋난다.
+    finetuned_default = engine.is_finetuned(st.session_state.selected_model)
+    if st.session_state.get("_finetuned_auto") != finetuned_default:
+        st.session_state._finetuned_auto = finetuned_default
+        st.session_state.skip_few_shot = finetuned_default
+
+    st.checkbox(
+        "파인튜닝 모델 (few-shot 생략)",
+        key="skip_few_shot",
+        help="finetune/ 파이프라인으로 학습한 모델은 few-shot 예시 없이 학습했습니다. "
+             "체크하면 예시를 빼고 보내 입력 토큰이 FAST 20%, FULL 40% 줄어듭니다. "
+             "튜닝하지 않은 모델에 체크하면 형식이 무너지므로 끄십시오.",
     )
 
     st.caption(
