@@ -180,20 +180,27 @@ def configured_provider() -> str:
     """세션 기본 공급자를 결정한다.
 
     LLM_PROVIDER를 secrets에 명시했으면 그걸 따른다. 명시하지 않았으면
-    실제로 키가 들어있는 공급자를 자동으로 고른다 — OPENROUTER_API_KEY만
-    있으면 openrouter, OPENAI_API_KEY만 있으면 openai. 이게 없으면
-    새로고침마다 기본값이 openrouter로 되돌아가 버려서, OpenAI 키만 넣어둔
-    사람은 매번 사이드바에서 공급자를 수동으로 바꿔야 하는 문제가 있었다.
+    실제로 설정된 것을 보고 자동으로 고른다 — 파인튜닝 모델을 우선한다.
+
+    LOCAL_BASE_URL이 있으면(파인튜닝 모델을 Ollama/vLLM/HF Inference
+    Endpoints 등으로 세워 둔 상태) 그것부터 시도한다. 이 프로젝트의 목표가
+    "폐쇄망 온프레미스로 전환"이므로, 파인튜닝 모델을 다 세팅해 놓고도
+    OpenRouter 무료 모델이 기본으로 뜨면 그 목표와 어긋난다. 없으면
+    OPENROUTER_API_KEY/OPENAI_API_KEY 순으로 예전 동작을 유지하고, 아무것도
+    없으면 local(기본 주소 http://localhost:11434/v1, 로컬 Ollama)로
+    떨어진다 — needs_key가 False라 키가 없어도 검증 단계에서 막히지 않는다.
     """
     value = str(st.secrets.get("LLM_PROVIDER", "") or "").strip().lower()
     if value in PROVIDERS:
         return value
 
+    if str(st.secrets.get("LOCAL_BASE_URL", "") or "").strip():
+        return "local"
     if str(st.secrets.get("OPENROUTER_API_KEY", "") or "").strip():
         return "openrouter"
     if str(st.secrets.get("OPENAI_API_KEY", "") or "").strip():
         return "openai"
-    return "openrouter"
+    return "local"
 
 
 def _validate_api_key(api_key: str, provider: dict) -> None:
