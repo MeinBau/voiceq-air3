@@ -308,6 +308,17 @@ def _extract_json(raw_text: str, required_keys: tuple[str, ...]) -> dict:
     return parsed
 
 
+#  OpenAI의 response_format={"type": "json_object"}를 그대로 안 받는 서버가 있다.
+#  TGI(HF Inference Endpoints의 Text Generation Inference 컨테이너)가 그런 경우로,
+#  이 형태를 "value(JSON 스키마) 필드 누락"이라며 400으로 거절한다 — OpenAI 표준에서
+#  벗어난 TGI 자체의 알려진 이탈이다. 이 프로젝트는 애초에 response_format을 절대적으로
+#  신뢰하지 않고 프롬프트 지시("순수 JSON만 출력")와 _extract_json 파싱을 기본 강제
+#  수단으로 삼고 있으므로(모듈 상단 docstring 참고), 거절당하면 그냥 빼고 그 기본
+#  수단만으로 진행한다. 어떤 모델이 거절했는지는 세션 동안 기억해 둬서, 매 발언마다
+#  같은 실패-재시도를 반복해 왕복을 낭비하지 않는다.
+_NO_RESPONSE_FORMAT: set[str] = set()
+
+
 def call_llm(
     client_factory: Callable[[], openai.OpenAI],
     model: str,
@@ -332,22 +343,25 @@ def call_llm(
     ]
 
     last_error: Exception | None = None
+    use_response_format = model not in _NO_RESPONSE_FORMAT
     for _ in range(max_retries + 1):
         client = client_factory()
         start = time.monotonic()
         try:
-            response = client.chat.completions.create(
+            kwargs = dict(
                 model=model,
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=0.2,
-                response_format={"type": "json_object"},
                 extra_body=extra_body,
                 extra_headers={
                     "HTTP-Referer": "https://voice-cue.local",
                     "X-Title": "VOICE-CUE",
                 },
             )
+            if use_response_format:
+                kwargs["response_format"] = {"type": "json_object"}
+            response = client.chat.completions.create(**kwargs)
         except openai.RateLimitError as e:
             # 무료 티어는 하루 50회다. 재시도하면 한도만 더 깎아먹으므로 즉시 중단한다.
             raise RuntimeError(
@@ -355,6 +369,14 @@ def call_llm(
                 "한국시간 오전 9시에 초기화되며, openrouter.ai에서 크레딧 10달러를 충전하면 "
                 f"하루 1000회로 늘어납니다. (원문: {str(e)[:120]})"
             ) from e
+        except openai.BadRequestError as e:
+            if use_response_format:
+                # response_format 자체를 거절한 서버다(TGI 등). 빼고 바로 재시도 —
+                # 이 시도는 max_retries 예산 안에서 소모되므로 왕복이 추가로 늘지 않는다.
+                _NO_RESPONSE_FORMAT.add(model)
+                use_response_format = False
+            last_error = e
+            continue
         except (openai.APIStatusError, openai.APIConnectionError, openai.APITimeoutError) as e:
             last_error = e
             continue
