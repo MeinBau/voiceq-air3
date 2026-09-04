@@ -5,3 +5,5 @@ __pycache__/
 venv/
 data/context_memory.json
 data/operation_log.json
+finetune/data/
+finetune/out/
