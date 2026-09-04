@@ -374,6 +374,24 @@ GPU를 시간당 빌려 vLLM을 직접 띄운다. 8.2-b의 명령을 그대로 �
 클라우드는 시연 편의를 위한 것일 뿐 같은 가중치를 부대 서버에 올리면 그대로 돈다.
 심사에서 물어보면 그렇게 답하면 되고, 8.2절의 Ollama 구성이 그 증거다.
 
+### 8.6 배포에서 실제로 걸린 것들 (실측)
+
+허브에 올린 모델을 HF Inference Endpoints(TGI)로 띄워 앱에 붙이면서 실제로 막혔던
+지점과 해결책이다. 어느 서빙 경로에서도 똑같이 나올 수 있는 문제라 남겨 둔다.
+
+| 증상 | 원인 | 해결 |
+|---|---|---|
+| `404 Not Found` (`/v1/chat/completions`) | 엔드포인트가 TGI가 아니라 Default 컨테이너로 생성됨. 컨테이너 종류는 생성 후 변경 불가 | 엔드포인트를 지우고 TGI로 다시 생성. `GET /info`가 200이면 TGI, 404면 Default |
+| `503 Service Unavailable` | Scale-to-Zero로 잠들어 있음 | 첫 요청 후 4~5분 대기(콜드 스타트). `LOCAL_TIMEOUT`을 180초 이상으로 |
+| `403 ... missing permissions: inference.endpoints.infer.write` | 토큰에 추론 권한 없음 | fine-grained 토큰에 Inference 권한 부여 |
+| `422 response_format: missing field 'value'` | TGI는 OpenAI 규격과 달리 `response_format`에 JSON 스키마(`value`)를 요구 | 앱이 알아서 처리한다. `llm_engine.call_llm`이 400/422를 받으면 `response_format`을 빼고 재시도하고, 그 모델을 세션 동안 기억해 다시 보내지 않는다 |
+| `422 Template error: template not found` | transformers 4.56부터 채팅 템플릿을 `tokenizer_config.json`이 아니라 별도 `chat_template.jinja`로 저장하는데, TGI/vLLM/Ollama는 `tokenizer_config.json`의 `chat_template` 키만 읽는다 | `python finetune/fix_chat_template.py <repo_id>` (쓰기 권한 토큰 필요) 실행 후 엔드포인트 Pause → Resume. 앞으로 학습하는 모델은 `train_lora.py`의 `embed_chat_template()`이 병합 직후에 자동으로 심는다 |
+
+마지막 항목은 학습은 멀쩡한데 배포만 죽는 형태라 원인을 찾기 어렵다. 모델 자체가
+정상인지 먼저 가르려면 채팅 템플릿을 안 쓰는 경로로 찔러 보면 된다 —
+`/v1/completions`에 ChatML(`<|im_start|>system ... <|im_end|>`)을 손으로 조립해
+보내서 JSON이 나오면 모델은 정상이고 서버 템플릿만 문제다.
+
 ## 9. 알려진 한계
 
 - **합성 데이터다.** 기획서 4-다①이 말한 "실제 회의록·작전상황일지"가 아니라

@@ -361,7 +361,36 @@ def merge(args: argparse.Namespace) -> None:
     merged = PeftModel.from_pretrained(base, adapter_dir).merge_and_unload()
     merged.save_pretrained(args.merge)
     AutoTokenizer.from_pretrained(args.model).save_pretrained(args.merge)
+    embed_chat_template(args.merge)
     print(f"병합 저장: {args.merge}")
+
+
+def embed_chat_template(model_dir: Path) -> bool:
+    """채팅 템플릿을 tokenizer_config.json 안에 넣어 준다.
+
+    transformers 4.56부터 save_pretrained가 템플릿을 tokenizer_config.json 밖의
+    chat_template.jinja 파일로 빼서 저장한다. 그런데 추론 서버(TGI, vLLM, Ollama)는
+    tokenizer_config.json의 chat_template 키만 읽으므로, 그대로 서빙하면 채팅 요청이
+    "Template error: template not found"로 전부 실패한다. 학습 자체는 멀쩡한데 배포만
+    죽는 형태라 원인을 찾기 어렵다 — 저장 직후에 되돌려 놓는다.
+    파일은 지우지 않는다(transformers 쪽 경로는 그대로 두는 편이 안전하다).
+    """
+    cfg_path = model_dir / "tokenizer_config.json"
+    jinja_path = model_dir / "chat_template.jinja"
+    if not cfg_path.exists():
+        return False
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    if cfg.get("chat_template"):
+        return False
+    if not jinja_path.exists():
+        print("[warn] chat_template.jinja가 없어 템플릿을 심지 못했습니다.")
+        return False
+    cfg["chat_template"] = jinja_path.read_text(encoding="utf-8")
+    cfg_path.write_text(
+        json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print("[merge] chat_template을 tokenizer_config.json에 심었습니다.")
+    return True
 
 
 def main() -> None:

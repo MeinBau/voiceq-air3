@@ -369,15 +369,18 @@ def call_llm(
                 "한국시간 오전 9시에 초기화되며, openrouter.ai에서 크레딧 10달러를 충전하면 "
                 f"하루 1000회로 늘어납니다. (원문: {str(e)[:120]})"
             ) from e
-        except openai.BadRequestError as e:
-            if use_response_format:
-                # response_format 자체를 거절한 서버다(TGI 등). 빼고 바로 재시도 —
-                # 이 시도는 max_retries 예산 안에서 소모되므로 왕복이 추가로 늘지 않는다.
+        except openai.APIStatusError as e:
+            if use_response_format and e.status_code in (400, 422):
+                # response_format 자체를 거절한 서버다. 빼고 바로 재시도 — 이 시도는
+                # max_retries 예산 안에서 소모되므로 왕복이 추가로 늘지 않는다.
+                # 상태코드가 서버마다 다르다: OpenAI 호환 서버는 400을 쓰지만 TGI는
+                # 422(Unprocessable Entity) + "response_format: missing field `value`"로
+                # 답하므로, BadRequestError만 잡으면 이 경로가 영영 안 탄다.
                 _NO_RESPONSE_FORMAT.add(model)
                 use_response_format = False
             last_error = e
             continue
-        except (openai.APIStatusError, openai.APIConnectionError, openai.APITimeoutError) as e:
+        except (openai.APIConnectionError, openai.APITimeoutError) as e:
             last_error = e
             continue
 
