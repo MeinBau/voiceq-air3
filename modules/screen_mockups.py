@@ -234,8 +234,13 @@ def _camera(source: dict) -> str:
     )
 
     svg = (
-        '<svg viewBox="0 0 320 180" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" '
-        'xmlns="http://www.w3.org/2000/svg" style="display:block;">'
+        # "slice"는 타일을 꽉 채우려고 viewBox 밖으로 넘치는 부분을 잘라내는데,
+        # 실제 타일 비율이 이 16:9 캔버스보다 정사각형에 가까우면 그 잘려나가는
+        # 부분에 타임스탬프·id 같은 화면 가장자리 글자가 걸려 잘려 보였다. "meet"은
+        # 절대 내용을 자르지 않고 남는 자리를 여백(레터박스)으로 두므로, 그 여백을
+        # 타일과 같은 어두운 배경으로 칠해 모니터 베젤처럼 보이게 한다.
+        '<svg viewBox="0 0 320 180" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" '
+        'xmlns="http://www.w3.org/2000/svg" style="display:block; background:#05080B;">'
         f'<rect width="320" height="95" fill="{sky}"/>'
         f'<rect y="95" width="320" height="85" fill="{ground}"/>'
         f"{transform_open}{scene}{transform_close}"
