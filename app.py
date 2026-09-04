@@ -441,7 +441,22 @@ with tab_log:
 
 with tab_memory:
     st.subheader("Context Memory (현재 누적 요약)")
+    st.caption("발언마다 AI가 자동으로 갱신하는 회의 맥락 메모입니다. 다음 발언을 판단할 때 이 내용을 그대로 참고합니다.")
     st.info(st.session_state.context_memory_summary or "아직 발언이 없습니다.")
+
+    with st.expander("Context Memory 직접 수정 (평소엔 AI가 자동 갱신 — 필요할 때만 사용)"):
+        # key를 지정하지 않는다 — key가 있는 위젯은 한 번 그려진 뒤로 value= 인자를
+        # 무시하고 위젯 자신의 이전 입력만 계속 보여줘서, 발언이 들어와 AI가 요약을
+        # 갱신해도 이 편집창엔 반영되지 않는 문제가 있었다(메인 기능인 자동 갱신
+        # 표시가 깨져 보이는 원인이었다). key 없이 매번 value=로 최신값을 그려야
+        # 편집창을 열 때마다 지금 요약을 정확히 반영한다.
+        edited_memory = st.text_area(
+            "Context Memory 편집", value=st.session_state.context_memory_summary, height=160,
+        )
+        if st.button("Context Memory 저장", key="save_memory"):
+            st.session_state.context_memory_summary = edited_memory.strip()
+            st.success("저장했습니다. 다음 발언부터 이 내용을 기준으로 판단합니다.")
+            st.rerun()
 
     st.subheader("발언 이력")
     if st.session_state.utterance_log:
