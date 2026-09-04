@@ -58,6 +58,26 @@ def _status_light(source_id: str, salt: str, ok_ratio: float = 0.85) -> str:
     return _OK_COLOR if (_seed(source_id, salt) % 100) / 100 < ok_ratio else _WARN_COLOR
 
 
+def _fill_wrap(svg_open_tail: str, svg_body: str, bg: str = "transparent") -> str:
+    """SVG 화면(카메라·레이더·위성구름 등)을 타일에 꽉 채우되, 그 타일이 속한 grid
+    row의 높이 계산에는 관여하지 않게 감싼다.
+
+    타일이 놓이는 grid row는 높이가 "auto"라 내용물 크기에 맞춰 정해지는데,
+    svg에 height:100%만 주면 이 auto 높이가 아직 안 정해진 상태라 퍼센트가
+    풀리지 않고, 브라우저가 viewBox 고유 비율(가로:세로)로 되돌아가 버린다.
+    그러면 그 "고유 비율로 계산된 높이"가 오히려 grid row 자체를 그만큼
+    부풀려서, 같은 줄의 다른(SVG 아닌) 화면보다 그 타일만 훨씬 커 보이는
+    문제가 생긴다(예: TOD·SSR이 비행 스케줄·상황판보다 두 배 가까이 컸던 원인).
+    position:absolute + inset:0으로 빼면 이 svg는 부모 크기 계산에서 완전히
+    빠지고, 타일은 플레이북이 배정한 크기(grid-row/column span) 그대로 유지된다.
+    """
+    svg = f'<svg {svg_open_tail} style="position:absolute; inset:0; width:100%; height:100%; display:block;">{svg_body}</svg>'
+    return (
+        f'<div style="position:relative; flex:1; min-height:0; overflow:hidden; background:{bg};">'
+        f"{svg}</div>"
+    )
+
+
 # ---------------------------------------------------------------------------
 # 카메라 계열 (CCTV · 열상 · 바디캠 · 조준경 · 이동형 · 출입통제 ANPR)
 # ---------------------------------------------------------------------------
@@ -233,22 +253,24 @@ def _camera(source: dict) -> str:
         for y in range(0, 180, 5)
     )
 
-    svg = (
-        # "slice"는 타일을 꽉 채우려고 viewBox 밖으로 넘치는 부분을 잘라내는데,
-        # 실제 타일 비율이 이 16:9 캔버스보다 정사각형에 가까우면 그 잘려나가는
-        # 부분에 타임스탬프·id 같은 화면 가장자리 글자가 걸려 잘려 보였다. "meet"은
-        # 절대 내용을 자르지 않고 남는 자리를 여백(레터박스)으로 두므로, 그 여백을
-        # 타일과 같은 어두운 배경으로 칠해 모니터 베젤처럼 보이게 한다.
-        '<svg viewBox="0 0 320 180" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" '
-        'xmlns="http://www.w3.org/2000/svg" style="display:block; background:#05080B;">'
+    # "slice"는 타일을 꽉 채우려고 viewBox 밖으로 넘치는 부분을 잘라내는데, 실제
+    # 타일 비율이 이 16:9 캔버스보다 정사각형에 가까우면 그 잘려나가는 부분에
+    # 타임스탬프·id 같은 화면 가장자리 글자가 걸려 잘려 보였다. "meet"은 절대
+    # 내용을 자르지 않고 남는 자리를 여백(레터박스)으로 두므로, 그 여백을 타일과
+    # 같은 어두운 배경으로 칠해 모니터 베젤처럼 보이게 한다.
+    body = (
         f'<rect width="320" height="95" fill="{sky}"/>'
         f'<rect y="95" width="320" height="85" fill="{ground}"/>'
         f"{transform_open}{scene}{transform_close}"
         f"{scanlines}{reticle}{badge}{battery}"
         f"{_osd_chrome(source_id, name, tone)}"
-        "</svg>"
     )
-    return f'<div style="flex:1; overflow:hidden;">{svg}</div>'
+    return _fill_wrap(
+        'viewBox="0 0 320 180" preserveAspectRatio="xMidYMid meet" '
+        'xmlns="http://www.w3.org/2000/svg"',
+        body,
+        bg="#05080B",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -308,20 +330,16 @@ def _radar(source: dict) -> str:
                 )
             )
 
-    svg = (
-        '<svg viewBox="0 0 200 200" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" '
-        'style="display:block;">'
+    body = (
         '<rect width="200" height="200" fill="#081008"/>'
         f"{rings}{ticks}{cardinal}{sweep}"
         '<circle cx="100" cy="100" r="2" fill="#8FE6B0"/>'
         + "".join(blips)
         + f'<text x="6" y="194" fill="#6FA383" font-size="7" font-family="monospace" opacity="0.7">'
         f'{_esc(source["id"])}</text>'
-        "</svg>"
     )
-    return (
-        f'<div style="flex:1; display:flex; align-items:center; justify-content:center; '
-        f'padding:6px; overflow:hidden;">{svg}</div>'
+    return _fill_wrap(
+        'viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"', body, bg="#081008"
     )
 
 
@@ -351,13 +369,14 @@ def _weather(source: dict) -> str:
             f'fill="#E8EAEC" opacity="{0.12 + (_seed(source_id, f"o{i}")%30)/100}"/>'
             for i in range(9)
         )
-        svg = (
-            '<svg viewBox="0 0 320 180" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" '
-            'style="display:block;"><rect width="320" height="180" fill="#0B1830"/>' + blobs +
+        body = (
+            '<rect width="320" height="180" fill="#0B1830"/>' + blobs +
             '<text x="10" y="170" fill="#9FB8D9" font-size="8" font-family="monospace" opacity="0.7">'
-            'IR ENHANCED · KMA-GK2A</text></svg>'
+            'IR ENHANCED · KMA-GK2A</text>'
         )
-        return f'<div style="flex:1; overflow:hidden;">{svg}</div>'
+        return _fill_wrap(
+            'viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg"', body, bg="#0B1830"
+        )
 
     if source_id == "MET-RDR":
         patches = "".join(
@@ -370,13 +389,14 @@ def _weather(source: dict) -> str:
             f'<circle cx="100" cy="100" r="{r}" fill="none" stroke="#2E4A3A" stroke-width="0.6" opacity="0.6"/>'
             for r in (30, 55, 80)
         )
-        svg = (
-            '<svg viewBox="0 0 200 200" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" '
-            'style="display:block;"><rect width="200" height="200" fill="#081008"/>'
+        body = (
+            '<rect width="200" height="200" fill="#081008"/>'
             + rings + patches +
-            '<circle cx="100" cy="100" r="2" fill="#8FE6B0"/></svg>'
+            '<circle cx="100" cy="100" r="2" fill="#8FE6B0"/>'
         )
-        return f'<div style="flex:1; display:flex; align-items:center; justify-content:center; padding:6px;">{svg}</div>'
+        return _fill_wrap(
+            'viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"', body, bg="#081008"
+        )
 
     if source_id == "MET-RVR":
         meters = int(_range(source_id, "m", 350, 2000))
