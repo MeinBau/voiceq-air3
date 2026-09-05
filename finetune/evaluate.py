@@ -612,8 +612,19 @@ def main() -> None:
                          "gen_dataset.py --layout-target으로 만든 데이터로 학습한 "
                          "모델에 쓴다. 지표②가 플레이북 파생이 아니라 모델이 낸 "
                          "배치를 채점하게 되며, 지어낸 source_id 개수도 함께 센다.")
+    ap.add_argument("--data", type=Path, default=None,
+                    help="turns_*.jsonl이 있는 디렉터리. 기본값 finetune/data. "
+                         "gen_dataset.py --layout-target --out finetune/data_layout로 "
+                         "만든 데이터를 평가할 때 finetune/data_layout처럼 지정한다 — "
+                         "train_lora.py --data와 같은 값을 줘야 한다(turns_*.jsonl 자체는 "
+                         "--layout-target 여부와 무관하게 두 디렉터리에서 동일하므로, "
+                         "꼭 그 데이터로 학습했을 때만 맞춰야 하는 건 아니지만 보통 같이 둔다).")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
+
+    if args.data:
+        global DATA_DIR
+        DATA_DIR = args.data
 
     backends = {"gold": GoldBackend, "perturb": PerturbBackend,
                 "openai": OpenAIBackend, "hf": HFBackend}
