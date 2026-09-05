@@ -300,10 +300,24 @@ def build_scenario(rng: random.Random, primary_situation: str) -> list[dict]:
 # SFT 변환 · 검증 · 출력
 # ---------------------------------------------------------------------
 
-def to_sft(turn: dict, route: str, few_shot: bool) -> dict:
+def to_sft(turn: dict, route: str, few_shot: bool, layout_target: bool = False) -> dict:
     if route == "fast":
-        system, user, target = prompts.FAST_SYSTEM_PROMPT, turn["fast_user"], turn["fast_target"]
-        shots = prompts.FAST_FEW_SHOT_MESSAGES
+        user = turn["fast_user"]
+        if layout_target:
+            # 기획서 원안 구조 — 모델이 화면 구성까지 직접 낸다. 정답 배치는 이미
+            # cop_reference에 플레이북으로 파생시켜 두었으므로 그 순서를 그대로 쓴다.
+            # grid는 넣지 않는다(playbook.tiling_for가 계속 계산한다) — 자세한 이유는
+            # prompts.FAST_LAYOUT_SYSTEM_PROMPT 위 주석 참고.
+            system = prompts.FAST_LAYOUT_SYSTEM_PROMPT
+            shots = prompts.FAST_LAYOUT_FEW_SHOT_MESSAGES
+            target = {
+                **turn["fast_target"],
+                "cop_layout": list(turn["cop_reference"]["source_ids"]),
+            }
+        else:
+            system = prompts.FAST_SYSTEM_PROMPT
+            shots = prompts.FAST_FEW_SHOT_MESSAGES
+            target = turn["fast_target"]
     else:
         system, user, target = prompts.FULL_SYSTEM_PROMPT, turn["full_user"], turn["full_target"]
         shots = prompts.FULL_FEW_SHOT_MESSAGES
@@ -357,6 +371,11 @@ def main() -> None:
                     help="SFT 샘플에 few-shot 예시를 포함한다. 기본값은 제외 — "
                          "파인튜닝의 목적이 few-shot 없이도 형식을 지키게 만들어 "
                          "입력 토큰과 지연시간을 줄이는 것이기 때문이다.")
+    ap.add_argument("--layout-target", action="store_true",
+                    help="FAST 학습 타깃에 cop_layout(우선순위 순 source_id 목록)을 "
+                         "포함한다. 기획서 원안대로 모델이 화면 구성까지 내는 구조를 "
+                         "파인튜닝으로 재현할 수 있는지 측정하기 위한 변형이며, "
+                         "앱 실행 경로는 이 옵션과 무관하게 플레이북을 계속 쓴다.")
     ap.add_argument("--out", type=Path, default=OUT_DIR)
     args = ap.parse_args()
 
@@ -400,7 +419,10 @@ def main() -> None:
         validate(turns)
         write_jsonl(args.out / f"turns_{split}.jsonl", turns)
 
-        sft = [to_sft(t, route, args.few_shot) for t in turns for route in ("fast", "full")]
+        sft = [
+            to_sft(t, route, args.few_shot, args.layout_target)
+            for t in turns for route in ("fast", "full")
+        ]
         write_jsonl(args.out / f"sft_{split}.jsonl", sft)
 
         kinds = Counter(t["full_target"]["operation_log_entry"]["kind"] for t in turns)

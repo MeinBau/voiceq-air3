@@ -6,4 +6,5 @@ venv/
 data/context_memory.json
 data/operation_log.json
 finetune/data/
+finetune/data_layout/
 finetune/out/
