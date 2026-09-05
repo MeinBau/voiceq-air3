@@ -46,6 +46,11 @@ OUT_DIR = Path(__file__).resolve().parent / "data"
 
 URGENCY_ORDER = {"긴급": 0, "주의": 1, "관찰": 2}
 IGNORE_REASON = "상황 판단·조치와 무관한 발언이므로 진행 중인 상황 유형을 유지"
+CONSTRAINT_REASON = "화면 배치에 대한 지시일 뿐 새로운 사태가 아니므로 상황 유형을 유지"
+
+# 발언 자체가 상황을 새로 알리거나 바꾸지 않을 때 FAST가 내는 값. 정의는 playbook에
+# 있고 앱·평가도 같은 상수를 쓴다 — 문자열을 복제하면 조용히 어긋난다.
+KEEP_SITUATION = pb.KEEP_SITUATION
 
 
 # ---------------------------------------------------------------------
@@ -156,11 +161,18 @@ class ScenarioState:
 # ---------------------------------------------------------------------
 
 def emit_turn(state: ScenarioState, rng: random.Random, speaker: str, utterance: str,
-              situation_type: str, reason: str, log_entry: dict) -> dict:
+              situation_type: str, reason: str, log_entry: dict,
+              label_type: str | None = None) -> dict:
     """프롬프트 입력 상태를 먼저 스냅샷하고, 그 다음 상태를 갱신한 결과를 정답으로 삼는다.
 
     순서가 중요하다. 기획서 4-③ "Context Memory를 가장 먼저 갱신하고 그것을 바탕으로
     나머지를 산출"과 같은 순서여야 학습 데이터가 런타임 동작과 일치한다.
+
+    label_type은 FAST 정답으로 쓸 값이고, situation_type은 화면(cop_reference)을 만들
+    때 쓸 값이다. 둘은 보통 같지만 잡담·화면배치 지시처럼 문장 자체에 상황 단서가 없는
+    턴에서는 달라진다 — 그런 턴의 정답은 "유지"이고, 화면은 진행 중이던 상황 그대로다.
+    이 둘을 같은 값으로 두면 "커피 좀 준비해 주시겠습니까?"에 '적 미사일 낙탄 상황'
+    같은 라벨이 붙어, 모델이 아무 단서 없는 문장에서 상황을 찍도록 배우게 된다.
     """
     state_in = {
         "context_memory": state.context_memory(),
@@ -182,7 +194,9 @@ def emit_turn(state: ScenarioState, rng: random.Random, speaker: str, utterance:
         "state_in": state_in,
         "fast_user": fast_user,
         "full_user": full_user,
-        "fast_target": {"situation": {"type": situation_type, "reason": reason}},
+        "fast_target": {
+            "situation": {"type": label_type or situation_type, "reason": reason}
+        },
         "full_target": {
             "context_memory": "",       # 갱신 후 채운다
             "situation_board": [],
@@ -250,6 +264,7 @@ def build_scenario(rng: random.Random, primary_situation: str) -> list[dict]:
                 chat_turn = emit_turn(
                     state, rng, chat_speaker, chat["u"], state.situation_type, IGNORE_REASON,
                     {"kind": "무시", "event_id": "", "content": ""},
+                    label_type=KEEP_SITUATION,
                 )
                 chat_turn["full_target"]["context_memory"] = state.context_memory()
                 chat_turn["full_target"]["situation_board"] = state.board_snapshot()
@@ -264,8 +279,9 @@ def build_scenario(rng: random.Random, primary_situation: str) -> list[dict]:
                 con_board = fill(con["board"], ctx)
                 con_ts = state.timestamp()
                 con_turn = emit_turn(
-                    state, rng, con_speaker, con_u, state.situation_type, con_board,
+                    state, rng, con_speaker, con_u, state.situation_type, CONSTRAINT_REASON,
                     {"kind": "조치", "event_id": event_id, "content": con_log},
+                    label_type=KEEP_SITUATION,
                 )
                 state.update_event(event_id, con_board, None, fill(con["mem"], ctx),
                                    con_log, con_speaker, con_ts)
@@ -318,7 +334,8 @@ def to_sft(turn: dict, route: str, few_shot: bool) -> dict:
 
 def validate(turns: list[dict]) -> None:
     """생성 즉시 라벨을 검증한다. 깨진 라벨로 학습을 돌리면 원인을 찾기가 훨씬 어렵다."""
-    valid_situations = set(pb.situation_names())
+    # "유지"는 플레이북의 상황 유형이 아니라 "이번 발언은 상황을 바꾸지 않는다"는 신호다.
+    valid_situations = set(pb.situation_names()) | {KEEP_SITUATION}
     for i, turn in enumerate(turns):
         sit = turn["fast_target"]["situation"]["type"]
         assert sit in valid_situations, f"turn {i}: 플레이북에 없는 상황 유형 {sit!r}"

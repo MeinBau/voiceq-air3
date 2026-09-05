@@ -401,19 +401,38 @@ def evaluate(turns: list[dict], backend: object, limit: int | None = None) -> di
         gold_type = turn["fast_target"]["situation"]["type"]
         # 런타임(context_memory.apply_fast_result)과 같은 관대한 매칭을 적용한다.
         matched = pb.find_situation(predicted)
-        resolved = matched["name"] if matched else "기타 상황"
+        if predicted == pb.KEEP_SITUATION:
+            resolved = pb.KEEP_SITUATION
+        else:
+            resolved = matched["name"] if matched else "기타 상황"
         if resolved == gold_type:
             fast_correct += 1
         else:
             confusion[f"{gold_type} → {resolved}"] += 1
 
-        # 지표② — 예측 유형으로 실제 레이아웃을 만들어 전문가 정답과 비교한다.
-        layout, _ = pb.build_layout(resolved, turn["utterance"])
-        pred_ids = [item["source_id"] for item in layout]
-        gold_ids = turn["cop_reference"]["source_ids"]
-        if pred_ids == gold_ids:
+        # 지표② — 화면 배치를 전문가 정답 레이아웃과 비교한다.
+        #
+        # "유지"는 화면을 그대로 두라는 뜻이라 평가도 그 결과로 채점한다. 이 하네스는
+        # 턴을 독립적으로 보므로 직전 화면을 재현할 수 없지만, 결과는 명확하다 —
+        # 정답도 "유지"면 화면이 정답 그대로 남으므로 만점이고, 한쪽만 "유지"면
+        # 바꿔야 할 때 안 바꿨거나(또는 그 반대) 화면이 어긋나므로 0점이다.
+        gold_keep = gold_type == pb.KEEP_SITUATION
+        pred_keep = resolved == pb.KEEP_SITUATION
+        if gold_keep and pred_keep:
+            # 화면을 안 바꾸는 것이 정답이고 실제로 안 바꿨다 — 화면은 정답 그대로다.
             cop_exact += 1
-        cop_overlap_sum += _cell_agreement(turn["cop_reference"]["panels"], layout)
+            cop_overlap_sum += 1.0
+        elif gold_keep or pred_keep:
+            # 한쪽만 "유지" — 바꿔야 할 때 안 바꿨거나 그대로 둬야 할 때 바꿨다.
+            # 어느 쪽이든 화면이 정답과 어긋나므로 0점이다(카운터를 올리지 않는다).
+            pass
+        else:
+            layout, _ = pb.build_layout(resolved, turn["utterance"])
+            pred_ids = [item["source_id"] for item in layout]
+            gold_ids = turn["cop_reference"]["source_ids"]
+            if pred_ids == gold_ids:
+                cop_exact += 1
+            cop_overlap_sum += _cell_agreement(turn["cop_reference"]["panels"], layout)
 
         # ---------- FULL (기록 경로) ----------
         try:

@@ -26,6 +26,13 @@ PLAYBOOK_PATH = Path(__file__).resolve().parent.parent / "data" / "cop_playbook.
 GRID_ROWS, GRID_COLS = 2, 6
 MAX_PANELS = GRID_ROWS * GRID_COLS
 
+# FAST가 "이번 발언은 상황을 바꾸지 않는다"고 말할 때 쓰는 값. 플레이북의 상황 유형이
+# 아니라 신호이며, 잡담·질문·화면 배치 지시처럼 문장 자체에 상황 단서가 없는 발언에 쓴다.
+# 앱(context_memory)·데이터 생성(gen_dataset)·평가(evaluate)가 모두 이 상수를 쓴다 —
+# 셋 중 하나라도 다른 문자열을 쓰면 조용히 어긋난다. 여기에 두는 이유는 이 모듈이
+# streamlit에 의존하지 않아 학습·평가 환경에서도 import할 수 있기 때문이다.
+KEEP_SITUATION = "유지"
+
 
 def _distribute(total: int, weights: list[float]) -> list[int]:
     """total 칸을 가중치 비율로 나눈다. 각자 최소 1칸은 갖고, 합은 정확히 total."""
@@ -300,12 +307,31 @@ def resolve_slot(slot_name: str, utterance: str, used: set[str] | None = None) -
 
 
 def build_layout(situation_name: str, utterance: str = "") -> tuple[list[dict], list[str]]:
-    """상황 유형에서 COP 레이아웃을 만든다.
+    """상황 유형 하나에서 COP 레이아웃을 만든다.
 
     반환: (레이아웃, 해석 실패한 슬롯 이름들)
     """
-    situation = find_situation(situation_name)
-    if situation is None:
+    return build_layout_multi([situation_name], utterance)
+
+
+def build_layout_multi(
+    situation_names: list[str], utterance: str = ""
+) -> tuple[list[dict], list[str]]:
+    """동시에 진행 중인 여러 상황의 화면을 한 벽면에 함께 배치한다.
+
+    두 사태가 같이 진행 중인데(예: 무인기 접근 + 지상 침투) 화면이 한 상황 것만
+    보이면, 나머지 사태는 지휘관 시야에서 그대로 사라진다. 실제로 그런 제보가 있었다
+    — 하나가 확정되는 순간 다른 하나가 화면에서 없어졌다.
+
+    병합 방식은 "라운드로빈"이다. 상황 A의 1순위 화면, 상황 B의 1순위 화면, A의 2순위,
+    B의 2순위… 순으로 번갈아 채운다. 앞쪽 상황을 다 채우고 남는 자리에 뒤 상황을 넣으면
+    두 번째 상황은 항상 구석의 한 칸짜리로 밀려나므로, 각 상황의 가장 중요한 화면이
+    먼저 큰 자리를 잡게 한다.
+
+    situation_names는 최근에 갱신된 순서(앞이 가장 최근)로 받는다.
+    """
+    situations = [s for s in (find_situation(n) for n in situation_names) if s]
+    if not situations:
         return [], []
 
     layout: list[dict] = []
@@ -332,18 +358,34 @@ def build_layout(situation_name: str, utterance: str = "") -> tuple[list[dict], 
         for source in resolve_slot(pinned_slot, utterance, used):
             _append(source, pinned_slot, "고정")
 
-    for slot_name in situation.get("screens", []):
-        resolved = resolve_slot(slot_name, utterance, used)
-        if not resolved:
-            unresolved.append(slot_name)
-            continue
-        for source in resolved:
-            if source["id"] in used:
-                continue  # fixed 슬롯이 이미 쓰인 소스를 가리키는 경우만 여기 걸린다.
-            if len(layout) >= MAX_PANELS:
-                break
-            _append(source, slot_name, "상황")
-        if len(layout) >= MAX_PANELS:
+    # 상황별 화면을 라운드로빈으로 섞는다. 상황이 하나뿐이면 예전과 완전히 같은
+    # 순서가 된다(그 상황의 screens를 앞에서부터 그대로 도는 것과 같다).
+    #
+    # 상황이 둘 이상이면 화면 수를 panel_budget까지로 자른다. 안 자르면 두 상황의
+    # 화면이 다 들어와 최대 10개가 되고, 그러면 벽면 12칸 중 8칸이 한 칸짜리가 되어
+    # "중요도에 따라 크기가 달라진다"는 전제가 무너진다. 라운드로빈이라 잘리는 것은
+    # 각 상황의 하위 화면이고, 두 상황의 상위 화면은 모두 살아남는다.
+    # 상황이 하나면 예전 규칙 그대로다 — 운용자가 플레이북에 직접 적어 넣은 화면은
+    # 그 자체가 의도이므로 budget을 넘더라도 자르지 않는다.
+    screen_cap = MAX_PANELS if len(situations) == 1 else panel_budget()
+    screen_lists = [situation.get("screens", []) for situation in situations]
+    for rank in range(max((len(x) for x in screen_lists), default=0)):
+        for screens in screen_lists:
+            if rank >= len(screens) or len(layout) >= screen_cap:
+                continue
+            slot_name = screens[rank]
+            resolved = resolve_slot(slot_name, utterance, used)
+            if not resolved:
+                if slot_name not in unresolved:
+                    unresolved.append(slot_name)
+                continue
+            for source in resolved:
+                if source["id"] in used:
+                    continue  # fixed 슬롯이 이미 쓰인 소스를 가리키는 경우만 여기 걸린다.
+                if len(layout) >= screen_cap:
+                    break
+                _append(source, slot_name, "상황")
+        if len(layout) >= screen_cap:
             break
 
     # --- 상시 표출 화면으로 보충 ---

@@ -35,6 +35,8 @@ def init_session_state() -> None:
         "situation_type": "",
         "situation_reason": "",
         "situation_unmatched": "",
+        # 지금 동시에 진행 중인 상황 유형들(최근 갱신 순). 화면은 이 전부를 함께 띄운다.
+        "active_situations": [],
         "voice_transcript": "",
         "provider": engine.configured_provider(),
         "selected_model": engine.default_model_for(engine.configured_provider()),
@@ -49,6 +51,15 @@ def init_session_state() -> None:
             st.session_state[key] = value
 
 
+# 한 벽면에 동시에 띄울 상황 유형의 최대 개수. 6패널을 둘로 나누면 상황당 2~3개씩
+# 돌아가는데, 셋이 되면 상황당 한두 개라 무엇을 보고 있는지 알 수 없게 된다.
+MAX_ACTIVE_SITUATIONS = 2
+
+# 정의는 playbook에 있다(그 모듈은 streamlit에 의존하지 않아 학습·평가 환경에서도
+# import된다). 기존 호출부가 cm.KEEP_SITUATION으로 읽으므로 여기서 다시 노출한다.
+KEEP_SITUATION = pb.KEEP_SITUATION
+
+
 def apply_fast_result(result_data: dict, utterance: str = "") -> None:
     """표출 경로 결과 — 상황 유형을 받아 플레이북으로 화면을 구성한다.
 
@@ -56,18 +67,51 @@ def apply_fast_result(result_data: dict, utterance: str = "") -> None:
     플레이북이 결정하고, "해당 지역 CCTV" 같은 위치 기반 슬롯은 이번 발언 텍스트를
     코드가 직접 읽어(playbook.resolve_slot) 방위·시설명이 겹치는 카메라를 고른다 —
     모델이 좌표나 화면 이름을 지어낼 여지가 없다.
+
+    상황은 하나만 유지하지 않는다. 두 사태가 같이 진행 중일 때 최근에 판정된 하나로
+    화면을 통째로 갈아치우면 나머지 사태가 지휘관 시야에서 사라지기 때문이다.
     """
     situation = result_data.get("situation") or {}
     raw_type = str(situation.get("type", "") or "").strip()
+    reason = str(situation.get("reason", "") or "")
+    actives = list(st.session_state.active_situations)
 
     matched = pb.find_situation(raw_type)
+
+    # 아래 두 경우에는 레이아웃을 다시 만들지 않는다. 다시 만들면 이번 발언 텍스트로
+    # 위치 슬롯을 새로 푸는데, "커피 좀 준비해 주시겠습니까?" 같은 문장으로는 엉뚱한
+    # 카메라가 뽑히고, 그 사이 진행 중이던 상황 화면이 통째로 밀려난다.
+
+    # ① 모델이 "유지"라고 답한 경우 — 잡담·질문·화면 배치 지시처럼 상황을 바꾸지 않는
+    #    발언이다. 세션 시작 직후라 띄운 화면이 없으면 계속 비어 있고, 첫 실제 상황이
+    #    들어올 때 채워진다.
+    if raw_type == KEEP_SITUATION:
+        if reason:
+            st.session_state.situation_reason = reason
+        st.session_state.situation_unmatched = ""
+        return
+
+    # ② 모델이 플레이북에 없는 이름을 지어낸 경우. 진행 중인 상황이 있으면 그대로 두는
+    #    편이 안전하다 — 예전에는 "기타 상황"으로 떨어뜨려 진행 중이던 화면을 날렸다.
+    #    아무것도 진행 중이 아니면 아래로 내려가 "기타 상황"으로 기준 화면을 띄운다.
+    if matched is None and actives:
+        st.session_state.situation_reason = reason
+        st.session_state.situation_unmatched = raw_type
+        return
+
     resolved_name = matched["name"] if matched else "기타 상황"
 
-    layout, unresolved = pb.build_layout(resolved_name, utterance)
+    # 이미 진행 중인 상황이면 맨 앞으로 올리고(가장 최근 갱신), 새 상황이면 앞에 넣는다.
+    actives = [name for name in actives if name != resolved_name]
+    actives.insert(0, resolved_name)
+    actives = actives[:MAX_ACTIVE_SITUATIONS]
+
+    layout, unresolved = pb.build_layout_multi(actives, utterance)
+    st.session_state.active_situations = actives
     st.session_state.cop_layout = layout
     st.session_state.dropped_sources = unresolved
-    st.session_state.situation_type = resolved_name
-    st.session_state.situation_reason = str(situation.get("reason", "") or "")
+    st.session_state.situation_type = " + ".join(actives)
+    st.session_state.situation_reason = reason
     st.session_state.situation_unmatched = raw_type if not matched else ""
 
 

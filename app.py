@@ -320,6 +320,8 @@ with st.sidebar:
             "situation_board", "operation_log", "latency_history",
             "display_latency_history", "dropped_sources",
             "map_markers", "_last_map_click", "voice_transcript",
+            "active_situations", "situation_type", "situation_reason",
+            "situation_unmatched",
         ):
             st.session_state.pop(key, None)
         cm.init_session_state()
