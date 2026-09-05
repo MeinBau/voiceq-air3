@@ -98,6 +98,12 @@ class ScenarioState:
         self.op_log: list[dict] = []      # {event_id, title, entries[]}
         self.corrections: list[str] = []
         self.situation_type: str = ""
+        # 지금 동시에 진행 중인 상황 유형(최근 갱신 순). 런타임
+        # context_memory.apply_fast_result와 같은 규칙으로 유지한다 — 두 사태가 같이
+        # 진행 중이면 화면도 둘을 함께 띄우므로, 학습 정답도 그렇게 만들어야 한다.
+        # 안 그러면 모델이 두 번째 사태 화면만 내도록 배워서, 첫 사태가 화면에서
+        # 사라지는 문제를 그대로 재현한다.
+        self.active_situations: list[str] = []
         self.clock = 14 * 3600            # 14:00:00에서 시작
         self.tick = 0
 
@@ -123,6 +129,13 @@ class ScenarioState:
             {"rank": i + 1, "event": e["event"], "urgency": e["urgency"]}
             for i, e in enumerate(ordered)
         ]
+
+    def touch_situation(self, name: str) -> list[str]:
+        """상황 유형을 활성 목록 맨 앞으로 올린다(없으면 추가). 최대 2개."""
+        actives = [s for s in self.active_situations if s != name]
+        actives.insert(0, name)
+        self.active_situations = actives[:2]
+        return self.active_situations
 
     # --- 갱신 ---
     def open_event(self, event: str, urgency: str, mem: str, log: str,
@@ -187,7 +200,9 @@ def emit_turn(state: ScenarioState, rng: random.Random, speaker: str, utterance:
         state_in["context_memory"], state_in["user_corrections"],
         org.describe_speaker(speaker), utterance, state_in["operation_log"],
     )
-    layout, unresolved = pb.build_layout(situation_type, utterance)
+    # 화면은 진행 중인 상황 전부를 함께 띄운다(런타임과 같은 규칙).
+    actives = state.active_situations or [situation_type]
+    layout, unresolved = pb.build_layout_multi(actives, utterance)
     return {
         "speaker": speaker,
         "utterance": utterance,
@@ -204,6 +219,7 @@ def emit_turn(state: ScenarioState, rng: random.Random, speaker: str, utterance:
         },
         "cop_reference": {
             "situation": situation_type,
+            "active_situations": list(actives),
             "source_ids": [item["source_id"] for item in layout],
             # 화면 이름만으로는 검수가 안 된다. 어느 자리에 얼마만 한 크기로 뜨는지가
             # 기획서 3-라② "핵심정보 상위배치"의 실체이므로 자리·크기까지 함께 남긴다.
@@ -245,6 +261,9 @@ def build_scenario(rng: random.Random, primary_situation: str) -> list[dict]:
         board_text = fill(tpl["board"], ctx)
         ts = state.timestamp()
 
+        # 이 사태를 활성 목록 맨 앞에 올린 뒤 화면을 만든다. 앞선 사태가 아직
+        # 진행 중이면 그 화면도 함께 남는다(런타임과 같은 규칙).
+        state.touch_situation(situation_name)
         turn = emit_turn(state, rng, speaker, utterance, situation_name, board_text,
                          {"kind": "상황", "event_id": f"사태{len(state.op_log) + 1}", "content": log})
         event_id = state.open_event(board_text, tpl.get("urg", "주의"),
@@ -307,6 +326,8 @@ def build_scenario(rng: random.Random, primary_situation: str) -> list[dict]:
         if event_index == 0 and len(events) > 1:
             # 두 번째 사태로 넘어갈 때 유형이 바뀐다. "새로운 종류의 사건일 때만 유형을
             # 바꾼다"는 FAST 프롬프트 규칙을 지키는 양성 예시가 여기서 만들어진다.
+            # active_situations는 비우지 않는다 — 첫 사태는 아직 종료되지 않았고,
+            # 그래서 두 번째 사태가 시작돼도 화면에 함께 남아 있어야 한다.
             state.situation_type = ""
 
     return turns

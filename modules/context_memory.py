@@ -37,6 +37,9 @@ def init_session_state() -> None:
         "situation_unmatched": "",
         # 지금 동시에 진행 중인 상황 유형들(최근 갱신 순). 화면은 이 전부를 함께 띄운다.
         "active_situations": [],
+        # 이번 화면을 누가 구성했는지("모델" | "플레이북")와, 모델이 지어내서 버린 화면 id.
+        "layout_origin": "",
+        "invented_sources": [],
         "voice_transcript": "",
         "provider": engine.configured_provider(),
         "selected_model": engine.default_model_for(engine.configured_provider()),
@@ -60,13 +63,21 @@ MAX_ACTIVE_SITUATIONS = 2
 KEEP_SITUATION = pb.KEEP_SITUATION
 
 
-def apply_fast_result(result_data: dict, utterance: str = "") -> None:
-    """표출 경로 결과 — 상황 유형을 받아 플레이북으로 화면을 구성한다.
+# 모델이 낸 배치를 쓰려면 최소 이만큼은 실제 카탈로그 화면이어야 한다. 이보다 적으면
+# 벽면 대부분이 비어 시연이 불가능하므로 플레이북으로 되돌린다.
+MIN_MODEL_PANELS = 3
 
-    LLM은 상황 유형 분류만 한다. 어떤 화면을 어느 순서로 띄울지는 운용자가 만든
-    플레이북이 결정하고, "해당 지역 CCTV" 같은 위치 기반 슬롯은 이번 발언 텍스트를
-    코드가 직접 읽어(playbook.resolve_slot) 방위·시설명이 겹치는 카메라를 고른다 —
-    모델이 좌표나 화면 이름을 지어낼 여지가 없다.
+
+def apply_fast_result(result_data: dict, utterance: str = "") -> None:
+    """표출 경로 결과를 화면 구성으로 반영한다.
+
+    화면 구성은 두 경로 중 하나로 정해진다.
+      · 모델이 cop_layout(화면 id 목록)을 낸 경우 — 기획서 원안 구조. 그대로 쓰되
+        반드시 playbook.layout_from_source_ids로 검증한다. 모델은 없는 화면 이름을
+        지어내거나 같은 화면을 두 번 낼 수 있고, 그러면 벽면에 빈 칸이 생긴다.
+        쓸 만한 화면이 너무 적으면 플레이북으로 되돌린다(무너진 화면보다 낫다).
+      · 모델이 안 낸 경우 — 운용자 플레이북이 상황 유형에서 결정론적으로 파생시킨다.
+        배치를 학습하지 않은 모델로 서빙할 때의 경로이며, 위 경로의 폴백이기도 하다.
 
     상황은 하나만 유지하지 않는다. 두 사태가 같이 진행 중일 때 최근에 판정된 하나로
     화면을 통째로 갈아치우면 나머지 사태가 지휘관 시야에서 사라지기 때문이다.
@@ -106,10 +117,30 @@ def apply_fast_result(result_data: dict, utterance: str = "") -> None:
     actives.insert(0, resolved_name)
     actives = actives[:MAX_ACTIVE_SITUATIONS]
 
-    layout, unresolved = pb.build_layout_multi(actives, utterance)
+    # --- 화면 구성 ---
+    raw_layout = result_data.get("cop_layout")
+    layout: list[dict] = []
+    unresolved: list[str] = []
+    invented: list[str] = []
+    layout_origin = "플레이북"
+
+    if isinstance(raw_layout, list) and raw_layout:
+        layout, invented = pb.layout_from_source_ids(raw_layout)
+        if len(layout) >= MIN_MODEL_PANELS:
+            layout_origin = "모델"
+        else:
+            # 쓸 만한 화면이 부족하다 — 지어낸 이름이 대부분인 경우다. 벽면을
+            # 반쯤 비워 두느니 플레이북 배치로 되돌린다.
+            layout = []
+
+    if not layout:
+        layout, unresolved = pb.build_layout_multi(actives, utterance)
+
     st.session_state.active_situations = actives
     st.session_state.cop_layout = layout
     st.session_state.dropped_sources = unresolved
+    st.session_state.layout_origin = layout_origin
+    st.session_state.invented_sources = invented
     st.session_state.situation_type = " + ".join(actives)
     st.session_state.situation_reason = reason
     st.session_state.situation_unmatched = raw_type if not matched else ""

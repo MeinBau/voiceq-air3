@@ -102,13 +102,25 @@ def run_utterance(speaker: str, utterance: str) -> None:
     # 파인튜닝 모델은 few-shot 없이 학습했다. 그대로 예시를 보내면 학습 때 본 적 없는
     # 형태의 입력이 되고, 줄이려고 튜닝한 입력 토큰도 도로 늘어난다.
     skip_few_shot = st.session_state.get("skip_few_shot", False)
-    fast_shots = [] if skip_few_shot else prompts.FAST_FEW_SHOT_MESSAGES
+
+    # 화면 구성을 모델이 직접 내게 할지. 프롬프트가 달라지므로 학습한 구조와 맞춰야
+    # 한다 — 배치를 학습하지 않은 모델에 이 프롬프트를 보내면 없는 화면 이름을
+    # 지어내고, 그러면 context_memory가 검증에서 걸러 플레이북으로 되돌린다.
+    llm_layout = st.session_state.get("llm_layout", False)
+    fast_system = (
+        prompts.FAST_LAYOUT_SYSTEM_PROMPT if llm_layout else prompts.FAST_SYSTEM_PROMPT
+    )
+    fast_all_shots = (
+        prompts.FAST_LAYOUT_FEW_SHOT_MESSAGES if llm_layout
+        else prompts.FAST_FEW_SHOT_MESSAGES
+    )
+    fast_shots = [] if skip_few_shot else fast_all_shots
     full_shots = [] if skip_few_shot else prompts.FULL_FEW_SHOT_MESSAGES
 
     result = engine.analyze_turn(
         client_factory=client_factory,
         model=model,
-        fast_system=prompts.FAST_SYSTEM_PROMPT,
+        fast_system=fast_system,
         fast_few_shot=fast_shots,
         fast_turn=fast_turn,
         full_system=prompts.FULL_SYSTEM_PROMPT,
@@ -294,6 +306,15 @@ with st.sidebar:
              "튜닝하지 않은 모델에 체크하면 형식이 무너지므로 끄십시오.",
     )
 
+    st.checkbox(
+        "화면 구성을 모델이 직접 (기획서 원안)",
+        key="llm_layout",
+        help="켜면 모델이 상황 유형과 함께 띄울 화면 목록까지 냅니다(기획서 원안 구조). "
+             "gen_dataset.py --layout-target으로 만든 데이터로 학습한 모델에만 켜십시오. "
+             "학습하지 않은 모델은 없는 화면 이름을 지어내며, 그 경우 검증에서 걸러 "
+             "플레이북 배치로 자동 복귀합니다. 끄면 운용자 플레이북이 배치를 정합니다.",
+    )
+
     st.caption(
         "폐쇄망 목표를 고려하면 시연에도 작은 모델을 쓰는 편이 좋습니다. "
         "거대 클라우드 모델로 시연해 놓고 온프레미스 12GB에서 된다고 하면 심사에서 반박당합니다."
@@ -325,7 +346,7 @@ with st.sidebar:
             "display_latency_history", "dropped_sources",
             "map_markers", "_last_map_click", "voice_transcript",
             "active_situations", "situation_type", "situation_reason",
-            "situation_unmatched",
+            "situation_unmatched", "layout_origin", "invented_sources",
         ):
             st.session_state.pop(key, None)
         cm.init_session_state()
@@ -349,6 +370,22 @@ with tab_wall:
             st.warning(
                 f"모델이 낸 유형 '{st.session_state.situation_unmatched}' 은 플레이북에 없어 "
                 "'기타 상황'으로 처리했습니다. 필요하면 플레이북 탭에서 추가하세요."
+            )
+        # 화면을 누가 구성했는지 밝힌다. 모델 배치를 켜 놓고도 조용히 플레이북으로
+        # 되돌아가 있으면, 시연 중에 "모델이 배치한다"고 설명하는 것과 실제가 어긋난다.
+        if st.session_state.layout_origin:
+            if st.session_state.layout_origin == "모델":
+                cols[0].caption("화면 구성: 모델이 직접 결정")
+            elif st.session_state.get("llm_layout"):
+                st.warning(
+                    "모델이 낸 화면 목록에 쓸 수 있는 화면이 부족해 플레이북 배치로 "
+                    "되돌렸습니다. 배치를 학습하지 않은 모델이면 사이드바의 "
+                    "'화면 구성을 모델이 직접'을 꺼 주십시오."
+                )
+        if st.session_state.invented_sources:
+            st.caption(
+                "모델이 지어내 버린 화면: "
+                + ", ".join(st.session_state.invented_sources[:6])
             )
 
     lr.render_cop_wall(

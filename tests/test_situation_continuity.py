@@ -101,3 +101,59 @@ assert ids(), "진행 중 상황이 없다가 새 상황이 오면 화면이 떠
 print("[7] 세션 시작 직후 '유지' -> 빈 화면 유지, 이후 새 상황은 정상 표출 (통과)")
 
 print("\n전체 통과")
+
+
+# =====================================================================
+# 모델이 화면 구성을 직접 내는 경로 (기획서 원안)
+# =====================================================================
+
+fake_st.session_state.clear()
+cm.init_session_state()
+
+
+def fast_with_layout(kind, layout, reason="테스트"):
+    return {"situation": {"type": kind, "reason": reason}, "cop_layout": layout}
+
+
+# ---- ⑤ 모델이 낸 유효한 배치를 그대로 쓴다 ----
+model_ids = ["SYS-BASEMAP", "TOD-N", "RDR-SSR", "ACFT-SCHED", "SYS-SITBOARD", "SYS-ADS"]
+cm.apply_fast_result(fast_with_layout("드론상황", model_ids), "북서방 무인기 2대 식별")
+assert ids() == model_ids, f"모델 배치가 그대로 쓰이지 않았다: {ids()}"
+assert fake_st.session_state.layout_origin == "모델"
+assert fake_st.session_state.cop_layout[0]["grid"] == (1, 1, 2, 2), "1순위가 2x2가 아니다"
+print("[8] 모델이 낸 배치 그대로 사용 + 격자는 코드가 계산 (통과)")
+
+# ---- ⑥ 지어낸 이름과 중복은 걸러낸다 ----
+cm.apply_fast_result(
+    fast_with_layout(
+        "드론상황",
+        ["SYS-BASEMAP", "CCTV-없는화면", "TOD-N", "TOD-N", "RDR-SSR", "SYS-ADS"],
+    ),
+    "북서방 무인기",
+)
+kept = ids()
+assert "CCTV-없는화면" not in kept, "지어낸 화면이 걸러지지 않았다"
+assert kept.count("TOD-N") == 1, "중복이 걸러지지 않았다"
+assert fake_st.session_state.layout_origin == "모델"
+assert set(fake_st.session_state.invented_sources) == {"CCTV-없는화면", "TOD-N"}, \
+    fake_st.session_state.invented_sources
+print(f"[9] 지어낸 이름·중복 제거 -> {len(kept)}패널, 버린 것 기록됨 (통과)")
+
+# ---- ⑦ 쓸 화면이 너무 적으면 플레이북으로 되돌린다 ----
+cm.apply_fast_result(
+    fast_with_layout("드론상황", ["없음1", "없음2", "없음3", "SYS-BASEMAP"]),
+    "북서방 무인기 2대 식별",
+)
+assert fake_st.session_state.layout_origin == "플레이북", \
+    f"폴백이 안 됐다: {fake_st.session_state.layout_origin}"
+playbook_ids, _ = pb.build_layout_multi(["드론상황"], "북서방 무인기 2대 식별")
+assert ids() == [x["source_id"] for x in playbook_ids], "폴백 배치가 플레이북과 다르다"
+print("[10] 쓸 화면 부족 -> 플레이북 배치로 자동 복귀 (통과)")
+
+# ---- ⑧ 모델 배치 경로에서도 "유지"는 화면을 안 건드린다 ----
+before = ids()
+cm.apply_fast_result(fast_with_layout("유지", ["SYS-BASEMAP", "TOD-N"]), "커피 좀 주세요")
+assert ids() == before, "유지인데 모델 배치로 화면이 바뀌었다"
+print("[11] 모델 배치 경로에서도 '유지'는 화면 그대로 (통과)")
+
+print("\n모델 배치 경로 전체 통과")

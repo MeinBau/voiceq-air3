@@ -405,6 +405,11 @@ class HFBackend:
 # 채점
 # ---------------------------------------------------------------------
 
+# 런타임(context_memory.MAX_ACTIVE_SITUATIONS)과 같은 값이어야 한다. 저 모듈은
+# streamlit에 의존해 학습·평가 환경에서 import할 수 없어 값만 맞춰 둔다.
+cm_max_active = 2
+
+
 def evaluate(turns: list[dict], backend: object, limit: int | None = None) -> dict:
     if limit:
         turns = turns[:limit]
@@ -475,7 +480,16 @@ def evaluate(turns: list[dict], backend: object, limit: int | None = None) -> di
                 if len(layout) != len(turn["cop_reference"]["source_ids"]):
                     panel_count_wrong += 1
             else:
-                layout, _ = pb.build_layout(resolved, turn["utterance"])
+                # 런타임과 같은 규칙으로 만든다. 모델이 내는 것은 "이번 발언의 상황
+                # 유형" 하나뿐이고, 같이 진행 중인 다른 사태는 앱이 세션 상태로
+                # 들고 있다(context_memory.active_situations). 이 하네스는 턴을
+                # 독립적으로 보므로 그 상태를 데이터에서 가져온다 — 예측한 유형을
+                # 맨 앞에 놓고 나머지 활성 상황을 뒤에 붙인다.
+                prior = turn["cop_reference"].get("active_situations") or []
+                actives = [resolved] + [a for a in prior if a != resolved]
+                layout, _ = pb.build_layout_multi(
+                    actives[:cm_max_active], turn["utterance"]
+                )
             pred_ids = [item["source_id"] for item in layout]
             gold_ids = turn["cop_reference"]["source_ids"]
             if pred_ids == gold_ids:
