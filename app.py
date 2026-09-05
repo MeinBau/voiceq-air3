@@ -188,10 +188,14 @@ with st.sidebar:
                     st.error(str(e))
 
         if st.session_state.voice_transcript:
+            # key를 지정하지 않는다. key가 있는 위젯은 한 번 그려진 뒤로 value= 인자를
+            # 무시하고 자기 이전 입력만 계속 보여주므로, 두 번째로 녹음해 변환하면
+            # 새 전사 결과 대신 첫 번째 결과가 그대로 남아 있었다. 그 상태로 처리하면
+            # 방금 말한 내용이 아니라 이전 발언이 일지에 들어간다.
+            # (Context Memory 편집창에서 같은 문제를 이미 겪어 같은 방식으로 고쳤다.)
             edited_transcript = st.text_area(
                 "변환된 발언 (필요하면 수정 후 처리)",
                 value=st.session_state.voice_transcript,
-                key="voice_transcript_edit",
                 height=100,
             )
             if st.button(
