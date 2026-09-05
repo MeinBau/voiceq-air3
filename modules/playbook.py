@@ -105,6 +105,49 @@ def tiling_for(n: int) -> list[tuple[int, int, int, int]]:
     return slots
 
 
+def layout_from_source_ids(source_ids: list) -> tuple[list[dict], list[str]]:
+    """모델이 낸 source_id 목록을 실제 레이아웃으로 바꾼다.
+
+    모델이 화면 구성을 직접 낼 때(기획서 원안 구조) 그 출력을 화면에 올리기 전에
+    반드시 거쳐야 하는 검증 계층이다. 모델은 다음 세 가지를 낼 수 있고, 그대로 두면
+    화면이 깨진다.
+      · 카탈로그에 없는 이름 — 존재하지 않는 화면이라 그 자리가 빈다.
+      · 같은 화면 중복 — 벽면의 두 칸이 같은 것을 비춘다.
+      · 개수 초과 — 12칸을 넘는다.
+    격자 좌표는 여기서 tiling_for로 계산한다. 격자 채우기는 판단이 아니라 패널 개수와
+    순번만으로 정해지는 기하학이고, 좌표까지 모델이 내면 겹침·빈칸을 어떤 학습으로도
+    구조적으로는 막지 못하기 때문이다.
+
+    반환: (레이아웃, 버려진 id 목록)
+    """
+    catalog = sources.by_id()
+    valid: list[dict] = []
+    invalid: list[str] = []
+    seen: set[str] = set()
+    for raw in source_ids:
+        sid = str(raw).strip()
+        entry = catalog.get(sid)
+        if entry is None or sid in seen:
+            invalid.append(sid)
+            continue
+        seen.add(sid)
+        valid.append({
+            "source_id": sid,
+            "name": entry["name"],
+            "cell": entry["cell"],
+            "slot": "모델 판단",
+            "origin": "모델",
+        })
+
+    valid = valid[:MAX_PANELS]
+    slots = tiling_for(len(valid))
+    layout = []
+    for i, (item, slot) in enumerate(zip(valid, slots)):
+        layout.append({**item, "priority": i + 1, "grid": slot,
+                       "position": position_label(slot)})
+    return layout, invalid
+
+
 def position_label(slot: tuple[int, int, int, int]) -> str:
     row, col, rspan, cspan = slot
     size = f" ({rspan}행×{cspan}열)" if (rspan > 1 or cspan > 1) else ""
