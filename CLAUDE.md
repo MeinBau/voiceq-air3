@@ -86,8 +86,9 @@
 
 ```
 voice-cue/
-├── app.py                       # Streamlit 엔트리포인트(운용): 접근 통제, 발언 입력, 5개 탭 UI
-├── demo.py                      # Streamlit 엔트리포인트(발표): 한 화면짜리 시연 무대
+├── app.py                       # 엔트리포인트: 접근 통제 + st.navigation으로 두 화면 전환
+├── operate.py                   # 운용 화면(페이지): 발언 입력, 5개 탭 UI
+├── demo.py                      # 시연 화면(페이지): 한 화면짜리 발표용 무대. 단독 실행도 됨
 ├── requirements.txt
 ├── .streamlit/
 │   ├── config.toml              # 다크 테마
@@ -104,6 +105,7 @@ voice-cue/
 │   ├── map_renderer.py          # base_map + sources를 위성사진 느낌 SVG로 렌더링, 클릭용 이미지 생성
 │   ├── map_icons.py             # 키워드 기반 자동 아이콘 프리셋(무인기/차량/침투 등) 관리
 │   ├── layout_renderer.py       # COP 레이아웃/상황판/작전상황일지를 Streamlit HTML로 렌더링
+│   ├── access.py                # 외부 공개 시 암호 관문 (두 화면이 함께 쓴다)
 │   ├── demo_theme.py            # 시연 페이지 색·폰트 토큰 (발표 자료 덱에서 추출)
 │   ├── demo_rooms.py            # 시연 페이지 방 배치 — 화자를 전투지휘소/상황실에 배정
 │   ├── demo_stage.py            # 전투지휘소 평면도(SVG)·상황실 카드·상태바·자막 렌더링
@@ -338,6 +340,7 @@ voice-cue/
   출력하게 하는 것)은 하지 말 것
 - UI는 다크 테마 + 그리드 배치로 "Video Wall" 느낌을 내되, 과도한 커스텀 CSS보다는
   Streamlit 기본 컴포넌트 조합으로 안정성 우선
-- 코드 변경 시마다 `streamlit run app.py`로 로컬 확인 후 커밋
+- 코드 변경 시마다 `streamlit run app.py`로 로컬 확인 후 커밋 — 사이드바 맨 위에서
+  운용/시연 화면을 전환한다. 시연 화면만 볼 때는 `streamlit run demo.py`
 - 모델/공급자 기본값을 바꿀 때는 `llm_engine.py`의 실측 코멘트(응답속도·JSON 안정성)를
   갱신할 것 — 심사에서 "거대 모델로 시연하고 온프레미스에서 된다고 주장" 하면 반박당함
