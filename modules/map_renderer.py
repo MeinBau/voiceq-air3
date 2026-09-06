@@ -130,6 +130,16 @@ def nearest_facility_name(x: float, y: float) -> str:
     return name
 
 
+def cell_center(cell: str) -> tuple[float, float] | None:
+    """'E4' 같은 격자 이름 -> 지도 픽셀 좌표. 잘못된 이름이면 None.
+
+    모델이 위치를 격자 이름으로 낼 때 쓴다(context_memory._place_model_markers).
+    모델에 픽셀 좌표를 내게 하면 지도 밖이나 활주로 한복판 같은 곳을 찍어도 걸러낼
+    수가 없다 — A~J × 1~7 라는 닫힌 목록이라야 검증이 성립한다.
+    """
+    return _center(cell)
+
+
 def facility_center(name: str) -> tuple[float, float] | None:
     """시설/초소/대공자산 이름 -> 지도 픽셀 좌표. 발언에 언급된 지명을 아이콘 자동
     배치 위치로 바꿀 때 쓴다(context_memory._auto_place_markers)."""

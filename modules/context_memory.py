@@ -40,6 +40,8 @@ def init_session_state() -> None:
         # 이번 화면을 누가 구성했는지("모델" | "플레이북")와, 모델이 지어내서 버린 화면 id.
         "layout_origin": "",
         "invented_sources": [],
+        # 모델이 낸 지도 아이콘 중 검증에서 버린 것들(이유 포함).
+        "dropped_markers": [],
         "voice_transcript": "",
         # 방금 반영한 판단의 원문 JSON. 실시간이면 모델이 낸 응답 그대로,
         # 프리베이크 재생이면 구워 둔 판단 그대로다. 화면에 보여 주기 위한 것 —
@@ -181,6 +183,57 @@ def _resolve_location(utterance: str) -> tuple[tuple[float, float] | None, str]:
     return None, ""
 
 
+def _place_model_markers(entries: list, event_id: str) -> None:
+    """모델이 낸 지도 아이콘 목록을 검증해서 배치한다.
+
+    모델은 둘만 낸다 — 대상 이름(label)과 격자 칸(cell). 아이콘·색은 여기서 프리셋
+    목록에서 가져오고, 좌표는 격자 이름을 코드가 픽셀로 바꾼다. 화면 소스를 다루는
+    방식(playbook.layout_from_source_ids)과 같은 원칙이다: 모델은 닫힌 목록에서
+    고르기만 하고, 실제 값은 코드가 카탈로그에서 꺼낸다.
+
+    버리는 경우는 셋이다. 셋 다 지도를 망가뜨리므로 조용히 통과시키면 안 된다.
+      · 목록에 없는 label — 존재하지 않는 대상이라 아이콘도 색도 없다.
+      · 격자 밖 cell — 지도 밖이나 없는 칸을 가리킨다.
+      · cell 누락 — "위치를 모르면 빼라"고 시켰는데 낸 경우다. 억지로 찍지 않는다.
+    버린 것은 dropped_markers에 남겨 운용자가 무엇이 무시됐는지 볼 수 있게 한다.
+    """
+    markers = st.session_state.map_markers
+    dropped: list[str] = []
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        label = str(entry.get("label", "") or "").strip()
+        cell = str(entry.get("cell", "") or "").strip().upper()
+        preset = mi.find_preset(label)
+        if preset is None:
+            dropped.append(f"{label or '(이름 없음)'} — 프리셋에 없는 대상")
+            continue
+        pos = mr.cell_center(cell)
+        if pos is None:
+            dropped.append(f"{label} — 격자 밖이거나 빠진 위치({cell or '없음'})")
+            continue
+
+        group_key = event_id or f"_standalone_{preset['label']}"
+        existing = next(
+            (m for m in markers
+             if m.get("event_id") == group_key and m.get("label") == preset["label"]),
+            None,
+        )
+        marker = {
+            "event_id": group_key, "x": pos[0], "y": pos[1],
+            "emoji": preset["emoji"], "color": preset["color"], "label": preset["label"],
+            "facility": mr.nearest_facility_name(pos[0], pos[1]),
+            "cell": cell, "timestamp": time.strftime("%H:%M:%S"),
+        }
+        if existing:
+            existing.update(marker)   # 같은 대상이면 새로 쌓지 않고 옮긴다
+        else:
+            markers.append(marker)
+
+    st.session_state.dropped_markers = dropped
+
+
 def _auto_place_markers(event_id: str, utterance: str) -> None:
     """발언 텍스트에 프리셋 키워드가 들어 있으면 해당 아이콘을 자동으로 놓거나 옮긴다.
 
@@ -243,7 +296,15 @@ def apply_full_result(
     # 무엇이 사태인지는 일지가 정하고, 얼마나 급한지만 모델 판단을 쓴다.
     _apply_urgency(event_id, result_data.get("situation_board") or [])
     _rebuild_situation_board()
-    _auto_place_markers(event_id or "", utterance)
+
+    # 지도는 두 경로 중 하나로 채운다. 모델이 map_markers를 냈으면 그것을 검증해서
+    # 쓰고(기획서 원안 구조), 안 냈으면 코드가 발언 키워드로 찍는다. 화면 구성과
+    # 같은 구조다 — 모델 경로가 있고, 그 폴백으로 코드 경로가 있다.
+    model_markers = result_data.get("map_markers")
+    if isinstance(model_markers, list):
+        _place_model_markers(model_markers, event_id or "")
+    else:
+        _auto_place_markers(event_id or "", utterance)
 
 
 # 상황판에 한 번에 올릴 사태 수. 프롬프트가 모델에 요구하는 상한과 같다.

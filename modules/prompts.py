@@ -238,6 +238,48 @@ FULL_SYSTEM_PROMPT = (
     + _JSON_RULE
 )
 
+# --- 전장상황도 아이콘까지 모델이 내는 변형 (기획서 원안 구조) ---
+# 기본 FULL은 지도를 건드리지 않는다. 코드가 발언에서 프리셋 키워드와 위치를 찾아
+# 아이콘을 찍는다. 이 변형은 그 판단까지 모델에 맡기되, 모델이 낼 수 있는 것을 두
+# 가지 닫힌 목록으로 묶는다.
+#   · label — data/map_icon_presets.json 의 대상 이름. 아이콘·색은 코드가 그 목록에서
+#     가져온다. 모델이 이모지를 지어내면 지도마다 다른 그림이 나온다.
+#   · cell  — 고정 배치도의 격자 이름(A~J × 1~7). 픽셀 좌표를 내게 하면 지도 밖이나
+#     엉뚱한 지점을 찍어도 걸러낼 방법이 없다.
+# 위치를 모르면 그 대상은 빼라고 명시한다 — 억지로 찍은 아이콘이 빈 지도보다 나쁘다.
+def _marker_rules() -> str:
+    from modules import base_map as bm
+    from modules import map_icons as mi
+
+    grid = bm.load_base_map()["base"]["grid"]
+    cols = "".join(grid["cols"])
+    labels = " / ".join(p["label"] for p in mi.load_presets())
+    return f"""
+[map_markers] — 전장상황도 아이콘
+- 이번 발언으로 지도에 표시할 대상을 배열로 내십시오. 표시할 것이 없으면 빈 배열입니다.
+- 각 항목은 label과 cell 두 개를 갖습니다.
+  · label : 아래 목록에 있는 이름만 그대로 쓰십시오. 새 이름을 만들지 마십시오.
+      {labels}
+  · cell  : 기지 배치도의 격자 칸 이름입니다. 열은 {cols[0]}~{cols[-1]}, 행은 1~{grid["rows"]}
+      입니다 (예: "E4"). 발언에 나온 시설·방위가 있는 칸을 고르십시오.
+- 발언에 위치 단서가 없으면 그 대상은 배열에서 빼십시오. 위치를 지어내지 마십시오.
+- 같은 대상이 이동했으면 새 칸으로 다시 내십시오. 지도에서는 아이콘이 옮겨집니다.
+"""
+
+
+FULL_MARKER_SYSTEM_PROMPT = (
+    FULL_SYSTEM_PROMPT.replace(
+        "출력 최상위 키는 context_memory, situation_board, operation_log_entry 세 개뿐입니다.",
+        "",
+    ).replace(_JSON_RULE, "")
+    + _marker_rules()
+    + """
+출력 최상위 키는 context_memory, situation_board, operation_log_entry, map_markers
+네 개뿐입니다."""
+    + _JSON_RULE
+)
+
+
 # --- 예시 1: 최근 사태가 없을 때 → kind="상황"으로 새 사태 생성 ---
 FULL_FEW_SHOT_USER_1 = """\
 [이전 Context Memory]

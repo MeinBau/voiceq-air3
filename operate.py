@@ -78,13 +78,19 @@ def run_utterance(speaker: str, utterance: str) -> None:
     fast_shots = [] if skip_few_shot else fast_all_shots
     full_shots = [] if skip_few_shot else prompts.FULL_FEW_SHOT_MESSAGES
 
+    # 전장상황도 아이콘도 모델이 낼지. 안 내면 코드가 발언 키워드로 찍는다(폴백).
+    llm_markers = st.session_state.get("llm_markers", False)
+    full_system = (
+        prompts.FULL_MARKER_SYSTEM_PROMPT if llm_markers else prompts.FULL_SYSTEM_PROMPT
+    )
+
     result = engine.analyze_turn(
         client_factory=client_factory,
         model=model,
         fast_system=fast_system,
         fast_few_shot=fast_shots,
         fast_turn=fast_turn,
-        full_system=prompts.FULL_SYSTEM_PROMPT,
+        full_system=full_system,
         full_few_shot=full_shots,
         full_turn=full_turn,
         extra_body=extra_body,
@@ -215,6 +221,14 @@ with st.sidebar:
         help="finetune/ 파이프라인으로 학습한 모델은 few-shot 예시 없이 학습했습니다. "
              "체크하면 예시를 빼고 보내 입력 토큰이 FAST 20%, FULL 40% 줄어듭니다. "
              "튜닝하지 않은 모델에 체크하면 형식이 무너지므로 끄십시오.",
+    )
+
+    st.checkbox(
+        "전장상황도 아이콘도 모델이 직접 (기획서 원안)",
+        key="llm_markers",
+        help="켜면 모델이 지도에 표시할 대상과 격자 칸(A~J×1~7)까지 냅니다. 아이콘·색은 "
+             "모델이 아니라 프리셋 목록에서 가져오고, 격자 밖이거나 프리셋에 없는 대상은 "
+             "버립니다. 끄면 발언 키워드로 코드가 찍습니다.",
     )
 
     st.checkbox(
@@ -468,11 +482,18 @@ with tab_memory:
 with tab_map_ops:
     st.subheader("전장상황도 실무자 조작")
     st.caption(
-        "발언에 프리셋 키워드(예: 무인기, 전술차량, 침투)가 들어 있으면 AI가 언급된 시설명·"
-        "방위로 위치를 잡아 전장상황도에 자동으로 아이콘을 배치합니다. 한 발언에 여러 아이콘이 "
-        "동시에 뜰 수 있습니다. 실무자는 아래에서 아이콘을 골라 정확한 위치로 미세 조정만 "
-        "하면 됩니다 — 새 상황을 여기서 만들지는 않습니다."
+        "아이콘은 두 경로 중 하나로 놓입니다. 사이드바에서 '전장상황도 아이콘도 모델이 직접'을 "
+        "켜면 모델이 대상과 격자 칸(A~J×1~7)을 내고, 끄면 발언에 프리셋 키워드(예: 무인기, "
+        "전술차량, 침투)가 있을 때 언급된 시설명·방위로 코드가 위치를 잡습니다. 어느 쪽이든 "
+        "아이콘·색은 프리셋 목록에서만 가져오며, 위치를 모르면 놓지 않습니다. 실무자는 아래에서 "
+        "아이콘을 골라 정확한 위치로 미세 조정만 하면 됩니다 — 새 상황을 여기서 만들지는 않습니다."
     )
+
+    dropped_markers = st.session_state.get("dropped_markers") or []
+    if dropped_markers:
+        st.warning(
+            "모델이 낸 아이콘 중 다음은 검증에서 버렸습니다 — " + " · ".join(dropped_markers)
+        )
 
     with st.expander("프리셋 아이콘 편집 (키워드가 발언에 하나라도 들어가면 자동 배치됩니다)"):
         edited_icons = st.data_editor(
