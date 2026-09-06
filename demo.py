@@ -23,6 +23,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from modules import access
 from modules import context_memory as cm
 from modules import demo_rooms as dr
 from modules import demo_scenario as dsc
@@ -35,6 +36,11 @@ from modules import playbook as pb
 from modules import prompts
 
 st.set_page_config(page_title="VOICE-CUE 시연", layout="wide")
+
+# 이 화면도 app.py와 같은 관문을 지난다. 스트림릿 클라우드처럼 외부에 열린
+# 곳에 올리면 링크만 알면 누구나 들어오고, 그 뒤에는 과금되는 API 키가 있다.
+# 로컬(localhost) 접속은 예전처럼 그대로 통과한다.
+access.require_password()
 
 WALL_COLS, WALL_ROWS = pb.DEMO_GRID_COLS, pb.GRID_ROWS
 
