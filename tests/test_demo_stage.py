@@ -47,15 +47,49 @@ for rid, people in report.items():
     print(f"    {name}: {len(people)}명" + ("  (배정된 화자 없음)" if not people else ""))
 
 
-# ---------- 2) 굽기 왕복과 대본 대조 ----------
-# 실제 굽기 파일을 건드리지 않도록 저장 경로를 임시 파일로 바꾼다.
-script = dsc.script()
-real_path = dsc.BAKED_PATH
-with tempfile.TemporaryDirectory() as tmp:
-    dsc.BAKED_PATH = Path(tmp) / "baked.json"
+# ---------- 2) 시나리오 목록·녹음·굽기 ----------
+catalog = dsc.available()
+check(catalog, "재생할 시나리오가 하나도 없다")
+ids = [c["id"] for c in catalog]
+check(len(ids) == len(set(ids)), "시나리오 id가 겹친다")
+for entry in catalog:
+    sid = entry["id"]
+    turns = dsc.script(sid)
+    check(len(turns) == entry["turns"], f"{sid}: 목록의 턴 수와 대본이 다르다")
+    check(turns, f"{sid}: 대본이 비어 있다")
+    for i, turn in enumerate(turns):
+        check(bool(turn.get("speaker")), f"{sid} {i + 1}번째 턴에 화자가 없다")
+        check(bool(turn.get("utterance")), f"{sid} {i + 1}번째 턴에 발언이 없다")
+        # 대본이 녹음을 가리키면 그 파일이 실제로 있어야 한다
+        if turn.get("audio"):
+            check(dsc.audio_path(sid, i) is not None,
+                  f"{sid} {i + 1}번째 턴의 녹음 {turn['audio']} 이 없다")
+    check(dsc.audio_path(sid, len(turns)) is None, f"{sid}: 범위 밖 턴이 녹음을 돌려준다")
 
-    check(dsc.load_baked() is None, "없는 굽기 파일을 읽어 왔다")
-    check(not dsc.matches_script(None), "굽기 결과가 없는데 대본과 일치한다고 한다")
+    baked = dsc.load_baked(sid)
+    if entry["has_bake"]:
+        check(dsc.matches_script(baked, sid), f"{sid}: 굽기가 대본과 어긋난다")
+        for i, bt in enumerate(baked["turns"]):
+            # 재생은 이 두 값을 그대로 apply_fast_result / apply_full_result에 넘긴다
+            fast = bt.get("fast") or {}
+            check(isinstance(fast.get("situation"), dict),
+                  f"{sid} {i + 1}턴: fast에 situation이 없다")
+            full = bt.get("full") or {}
+            check(isinstance(full.get("operation_log_entry"), dict),
+                  f"{sid} {i + 1}턴: full에 operation_log_entry가 없다")
+
+sample = catalog[0]["id"]
+script = dsc.script(sample)
+
+# 저장 경로를 임시로 돌려 실제 굽기 파일을 건드리지 않는다
+real_dir = dsc.DATA_DIR
+with tempfile.TemporaryDirectory() as tmp:
+    dsc.DATA_DIR = Path(tmp)
+    (dsc.DATA_DIR / f"{sample}.json").write_text(
+        json.dumps({"name": "임시", "turns": script}, ensure_ascii=False), encoding="utf-8"
+    )
+    check(dsc.load_baked(sample) is None, "없는 굽기 파일을 읽어 왔다")
+    check(not dsc.matches_script(None, sample), "굽기가 없는데 대본과 일치한다고 한다")
 
     good = [
         {"speaker": t["speaker"], "utterance": t["utterance"],
@@ -63,22 +97,28 @@ with tempfile.TemporaryDirectory() as tmp:
          "full": None, "display_latency": 1.2}
         for t in script
     ]
-    dsc.save_baked(good, model="m", baked_at="2026-01-01 00:00")
-    check(dsc.matches_script(dsc.load_baked()), "왕복한 굽기 결과가 대본과 다르다고 한다")
+    dsc.save_baked(good, model="m", baked_at="2026-01-01 00:00", scenario_id=sample)
+    check(dsc.matches_script(dsc.load_baked(sample), sample), "왕복한 굽기가 대본과 다르다고 한다")
 
-    dsc.save_baked(good[:-1], model="m", baked_at="x")
-    check(not dsc.matches_script(dsc.load_baked()), "턴 수가 모자란 굽기를 걸러내지 못했다")
+    dsc.save_baked(good[:-1], model="m", baked_at="x", scenario_id=sample)
+    check(not dsc.matches_script(dsc.load_baked(sample), sample),
+          "턴 수가 모자란 굽기를 걸러내지 못했다")
 
     edited = [dict(t) for t in good]
     edited[0]["utterance"] = "대본에 없는 발언"
-    dsc.save_baked(edited, model="m", baked_at="x")
-    check(not dsc.matches_script(dsc.load_baked()), "발언이 바뀐 굽기를 걸러내지 못했다")
+    dsc.save_baked(edited, model="m", baked_at="x", scenario_id=sample)
+    check(not dsc.matches_script(dsc.load_baked(sample), sample),
+          "발언이 바뀐 굽기를 걸러내지 못했다")
 
-    dsc.BAKED_PATH.write_text("{ 깨진 json", encoding="utf-8")
-    check(dsc.load_baked() is None, "깨진 굽기 파일에서 예외가 새어 나온다")
-dsc.BAKED_PATH = real_path
-check(dsc.BAKED_PATH == real_path, "굽기 경로를 되돌리지 못했다")
-print(f"[굽기] 대본 {len(script)}발언 · 왕복/불일치/깨진 파일 처리 확인")
+    (dsc.DATA_DIR / f"{sample}.baked.json").write_text("{ 깨진 json", encoding="utf-8")
+    check(dsc.load_baked(sample) is None, "깨진 굽기 파일에서 예외가 새어 나온다")
+dsc.DATA_DIR = real_dir
+check(dsc.DATA_DIR == real_dir, "데이터 경로를 되돌리지 못했다")
+print(f"[시나리오] {len(catalog)}개 — " + ", ".join(
+    f"{c['id']}({c['turns']}턴"
+    + (",음성" if c["has_audio"] else "")
+    + (",굽기" if c["has_bake"] else "") + ")"
+    for c in catalog))
 
 
 # ---------- 3) 무대 렌더링 ----------

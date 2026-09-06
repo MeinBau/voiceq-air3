@@ -109,7 +109,8 @@ voice-cue/
 │   ├── demo_stage.py            # 전투지휘소 평면도(SVG)·상황실 카드·상태바·자막 렌더링
 │   └── demo_scenario.py         # 시나리오 대본 읽기, LLM 판단 결과 굽기/재생
 ├── tools/
-│   └── gen_screen_sources.py    # data/screen_sources.json 생성기 (런타임 미사용, 결과만 커밋)
+│   ├── gen_screen_sources.py    # data/screen_sources.json 생성기 (런타임 미사용, 결과만 커밋)
+│   └── extract_rehearsal.py     # finetune 데이터셋 → 리허설 대본·정답 굽기 추출기 (결과만 커밋)
 ├── data/
 │   ├── organization.json        # 편제·화자 정의
 │   ├── cop_playbook.json        # 상황 유형별 화면 슬롯 정답 레이아웃 (앱에서 편집 가능)
@@ -119,7 +120,10 @@ voice-cue/
 │   ├── screen_sources.json      # 화면 소스 카탈로그 270건 (생성됨, 커밋됨)
 │   ├── sample_dialogues/
 │   │   ├── scenario1.json       # 시연용 샘플 발언 시퀀스 (ORE 훈련)
-│   │   └── scenario1.baked.json # (선택) 굽기 결과 — 없으면 실시간으로만 재생
+│   │   ├── drone.json           # 리허설 대본 — 드론상황 7턴 (finetune train-094)
+│   │   ├── intrusion.json       # 리허설 대본 — 미상인원 기지침투 7턴 (finetune valid-019)
+│   │   ├── *.baked.json         # 대본별 판단 결과 — drone/intrusion은 데이터셋 정답
+│   │   └── audio/               # 대본 발언 녹음 14개 (m4a). 없으면 자막만 나온다
 │   ├── context_memory.json      # (선택) persist_to_disk() 호출 시 생성, git 추적 안 함
 │   └── operation_log.json       # (선택) persist_to_disk() 호출 시 생성, git 추적 안 함
 ├── finetune/                    # 파인튜닝 (기획서 3-나 1단계) — 앱 실행과 완전히 무관
@@ -261,6 +265,7 @@ voice-cue/
 | Whisper 음성 입력 STT | ✅ 완료 — 텍스트 입력과 별개의 UI, `OPENAI_API_KEY` 필요 (`modules/stt.py`) |
 | 발표용 시연 페이지 | ✅ 완료 — 비디오월 2×4 + 전투지휘소 평면도 + 상황실 4개를 한 화면에 (`streamlit run demo.py`) |
 | 시나리오 프리베이크·자동재생 | ✅ 완료 — 리허설에서 구운 판단 결과로 네트워크 없이 재생 (`modules/demo_scenario.py`) |
+| 음성 리허설 시나리오 2건 | ✅ 완료 — 드론상황·기지침투 각 7턴, 녹음 재생 + 데이터셋 정답 판단으로 무네트워크 구동 |
 | 파인튜닝 학습 데이터셋 구축 (기획서 3-나 1단계 "500건 이상") | ✅ 완료 — 1,527턴 / 3,054 SFT 샘플 (`finetune/gen_dataset.py`) |
 | 파인튜닝 평가 하네스 (기획서 3-라 4개 지표 / 4-다③) | ✅ 완료 — gold 자기검증 100% 통과 (`finetune/evaluate.py`) |
 | sLLM LoRA 학습 (기획서 4-다②) | ✅ Kaggle T4 x2에서 Qwen2.5-1.5B 1에폭 완주 (152스텝 33분). **튜닝 효과 실측: 상황유형 정확도 45%→75%, 키워드 정확도 60.6%→84.9%** (`finetune/README.md` 4절). 개발 PC GPU(GTX 970)로는 불가하므로 `finetune/kaggle_train.ipynb`를 Save & Run All로 실행 |

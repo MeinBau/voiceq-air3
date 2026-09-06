@@ -19,6 +19,7 @@
 """
 
 import time
+from pathlib import Path
 
 import streamlit as st
 
@@ -43,6 +44,9 @@ st.session_state.setdefault("stage_text", "")
 st.session_state.setdefault("stage_voice", False)
 # 다음에 재생할 대본 줄 번호. len(대본)이면 재생이 끝난 상태다.
 st.session_state.setdefault("play_index", 0)
+# 지금 재생 중인 시나리오와, 방금 재생한 턴의 녹음 파일 경로.
+st.session_state.setdefault("scenario_id", dsc.SCENARIO_IDS[0])
+st.session_state.setdefault("stage_audio", "")
 
 SPEAKERS = org.speaker_titles()
 
@@ -130,11 +134,14 @@ def run_turn(speaker: str, utterance: str, via_voice: bool = False) -> dict | No
     }
 
 
-def play_scripted_turn(index: int, use_baked: bool) -> None:
-    """대본의 한 줄을 재생한다. 구운 결과가 있으면 LLM을 부르지 않는다."""
-    turn = dsc.script()[index]
+def play_scripted_turn(scenario_id: str, index: int, use_baked: bool) -> None:
+    """대본의 한 줄을 재생한다. 구운 결과가 있으면 LLM을 부르지 않는다.
+
+    그 턴의 녹음 파일 경로를 상태에 남겨, 다음 그리기에서 사이드바가 틀어 준다.
+    """
+    turn = dsc.script(scenario_id)[index]
     if use_baked:
-        baked_turn = (dsc.load_baked() or {})["turns"][index]
+        baked_turn = (dsc.load_baked(scenario_id) or {})["turns"][index]
         apply_turn(
             baked_turn["speaker"],
             baked_turn["utterance"],
@@ -144,6 +151,9 @@ def play_scripted_turn(index: int, use_baked: bool) -> None:
         )
     else:
         run_turn(turn["speaker"], turn["utterance"])
+
+    audio = dsc.audio_path(scenario_id, index)
+    st.session_state.stage_audio = str(audio) if audio else ""
 
 
 # ---------- 조작 (발표 중에는 접어 둔다) ----------
@@ -167,16 +177,37 @@ with st.sidebar:
     st.divider()
     st.caption("시나리오 재생")
 
-    script = dsc.script()
-    baked = dsc.load_baked()
-    can_replay = dsc.matches_script(baked)
+    catalog = dsc.available()
+    labels = {
+        c["id"]: f"{c['name']}  ({c['turns']}턴{'·음성' if c['has_audio'] else ''})"
+        for c in catalog
+    }
+    chosen = st.selectbox(
+        "시나리오",
+        [c["id"] for c in catalog],
+        format_func=lambda i: labels[i],
+        index=[c["id"] for c in catalog].index(st.session_state.scenario_id)
+        if st.session_state.scenario_id in labels else 0,
+    )
+    if chosen != st.session_state.scenario_id:
+        # 시나리오를 바꾸면 진행 위치와 재생 중인 녹음도 같이 되돌린다.
+        st.session_state.scenario_id = chosen
+        st.session_state.play_index = 0
+        st.session_state.stage_audio = ""
+        st.session_state.stage_auto = False
+        st.rerun()
+
+    scenario_id = st.session_state.scenario_id
+    script = dsc.script(scenario_id)
+    baked = dsc.load_baked(scenario_id)
+    can_replay = dsc.matches_script(baked, scenario_id)
     # 구운 결과가 없거나 대본과 어긋나면 실시간 외에는 고를 것이 없다.
     sources = ["프리베이크", "실시간 LLM"] if can_replay else ["실시간 LLM"]
     source = st.selectbox("재생 소스", sources)
     # 자동 재생은 화면 맨 아래에서 돌기 때문에 이 선택을 상태로 넘겨야 한다.
     use_baked = source == "프리베이크"
     st.session_state.stage_use_baked = use_baked
-    st.caption(dsc.describe(baked))
+    st.caption(dsc.describe(baked, scenario_id))
 
     idx = st.session_state.play_index
     done = idx >= len(script)
@@ -185,13 +216,14 @@ with st.sidebar:
     step_cols = st.columns(2)
     if step_cols[0].button("처음으로", use_container_width=True):
         st.session_state.play_index = 0
+        st.session_state.stage_audio = ""
         st.session_state.stage_auto = False
         st.rerun()
     if step_cols[1].button(
         "다음 발언", type="primary", use_container_width=True, disabled=done
     ):
         with st.spinner(f"[{script[idx]['speaker']}] 처리 중…"):
-            play_scripted_turn(idx, use_baked)
+            play_scripted_turn(scenario_id, idx, use_baked)
         st.session_state.play_index = idx + 1
         st.rerun()
 
@@ -213,6 +245,12 @@ with st.sidebar:
     if st.session_state.get("stage_auto"):
         st.caption("자동 재생 중에는 간격만큼 화면이 멈춰 있어 조작이 늦게 먹습니다.")
 
+    audio_file = st.session_state.get("stage_audio") or ""
+    if audio_file and Path(audio_file).exists():
+        # 녹음은 m4a(AAC)다. 크롬·사파리·엣지는 그대로 재생하지만, AAC를 빼고 빌드한
+        # 일부 리눅스 크로미움에서는 소리가 안 난다 — 그 경우에도 자막과 화면은 그대로다.
+        st.audio(Path(audio_file).read_bytes(), format="audio/mp4", autoplay=True)
+
     st.divider()
     st.caption("굽기 — 실시간 LLM으로 한 번 돌려 판단 결과를 저장")
     if st.button("시나리오 굽기", use_container_width=True):
@@ -233,6 +271,7 @@ with st.sidebar:
                 entries,
                 model=str(st.session_state.get("selected_model", "")),
                 baked_at=time.strftime("%Y-%m-%d %H:%M"),
+                scenario_id=scenario_id,
             )
             st.success(f"저장했습니다 — {path.name}")
         st.session_state.play_index = len(entries)
@@ -251,7 +290,8 @@ with st.sidebar:
     if st.button("초기화", use_container_width=True):
         for key in ("cop_layout", "situation_board", "operation_log", "utterance_log",
                     "active_situations", "situation_type", "map_markers",
-                    "stage_speaker", "stage_text", "stage_voice", "play_index"):
+                    "stage_speaker", "stage_text", "stage_voice", "play_index",
+                    "stage_audio"):
             st.session_state.pop(key, None)
         cm.init_session_state()
         st.rerun()
@@ -322,9 +362,12 @@ st.markdown(
 # 이 순서여야 관객이 발언마다 화면이 바뀌는 것을 볼 수 있다. 위쪽(사이드바)에서
 # 처리하면 아직 그리지도 않은 화면을 두고 쉬게 된다.
 if st.session_state.get("stage_auto"):
-    if st.session_state.play_index < len(dsc.script()):
+    scenario_id = st.session_state.scenario_id
+    if st.session_state.play_index < len(dsc.script(scenario_id)):
         time.sleep(st.session_state.get("stage_pause", 2.0))
         next_index = st.session_state.play_index
-        play_scripted_turn(next_index, st.session_state.get("stage_use_baked", False))
+        play_scripted_turn(
+            scenario_id, next_index, st.session_state.get("stage_use_baked", False)
+        )
         st.session_state.play_index = next_index + 1
         st.rerun()
