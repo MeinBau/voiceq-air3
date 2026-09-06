@@ -15,8 +15,7 @@
 → playbook)를 그대로 탄다. 벽면이 2행 4열인 것만 다르며, 그것도 playbook.retile이
 좌표만 다시 계산한다 — 선택 로직을 복제하면 두 화면의 판단이 갈라지기 때문이다.
 
-실행: `streamlit run app.py` 로 띄운 뒤 사이드바에서 '시연 화면'을 고르거나,
-      `streamlit run demo.py` 로 이 화면만 단독으로 띄운다.
+실행: streamlit run demo.py
 """
 
 import time
@@ -24,7 +23,6 @@ from pathlib import Path
 
 import streamlit as st
 
-from modules import access
 from modules import context_memory as cm
 from modules import demo_rooms as dr
 from modules import demo_scenario as dsc
@@ -37,10 +35,6 @@ from modules import playbook as pb
 from modules import prompts
 
 st.set_page_config(page_title="VOICE-CUE 시연", layout="wide")
-
-# 단독 실행으로 들어와도 관문을 지나치지 않게 한다. app.py가 이미 통과시켰으면
-# 곧바로 돌아온다. 예전에는 시연 페이지에만 관문이 없어 외부 공개 시 구멍이었다.
-access.require_password()
 
 WALL_COLS, WALL_ROWS = pb.DEMO_GRID_COLS, pb.GRID_ROWS
 
