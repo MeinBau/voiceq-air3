@@ -45,7 +45,7 @@ SPEAKERS = org.speaker_titles()
 
 
 def run_turn(speaker: str, utterance: str, via_voice: bool = False) -> None:
-    """발언 하나를 처리한다. 말풍선을 먼저 세우고, 판단 결과로 벽면을 바꾼다.
+    """발언 하나를 처리한다. 화자를 먼저 켜고, 판단 결과로 벽면을 바꾼다.
 
     app.run_utterance와 같은 파이프라인이다. 여기서는 시연에 쓰지 않는 것(수동 보정
     누적, 지연시간 이력)을 빼고 화면에 보이는 것만 남겼다.
@@ -160,22 +160,26 @@ st.markdown(th.css(), unsafe_allow_html=True)
 cur_speaker = st.session_state.stage_speaker or None
 cur_text = st.session_state.stage_text or None
 
-header = st.columns([4, 1])
-header[0].markdown(
-    f'<div style="font-size:1.15rem; font-weight:800; letter-spacing:2px; '
-    f'color:{th.COLORS["accent_bright"]};">VOICE-CUE · 전투지휘소 상황판</div>',
-    unsafe_allow_html=True,
-)
-if st.session_state.display_latency_history:
-    header[1].metric("표출 지연", f"{st.session_state.display_latency_history[-1]:.1f}s")
-
+latencies = st.session_state.display_latency_history
 # 8칸에 6패널을 넣으면 1순위가 2×2(4칸)를 못 받는다(4+5>8). 그러면 항상 1순위로
 # 고정되는 전장상황도가 1행짜리 납작한 타일이 되어 격자 한 줄만 보인다. 벽면이
 # 좁아진 만큼 화면 수를 줄여, 지도가 제 크기를 갖고 나머지도 안 잘리게 한다.
 WALL_PANEL_CAP = 5
 
+wall_layout = pb.retile(st.session_state.cop_layout[:WALL_PANEL_CAP], WALL_COLS)
+
+st.markdown(
+    ds.header_html(
+        situation=st.session_state.situation_type,
+        latency=latencies[-1] if latencies else None,
+        panels=len(wall_layout),
+        clock=time.strftime("%H:%M:%S"),
+    ),
+    unsafe_allow_html=True,
+)
+
 lr.render_cop_wall(
-    pb.retile(st.session_state.cop_layout[:WALL_PANEL_CAP], WALL_COLS),
+    wall_layout,
     st.session_state.situation_board,
     st.session_state.map_markers,
     cols=WALL_COLS,
@@ -187,17 +191,22 @@ lr.render_cop_wall(
     row_track="max(150px, 22vh)",
 )
 
-STAGE_HEIGHT = "32vh"
+STAGE_HEIGHT = "31vh"
+
+# 두 칸 모두 같은 높이의 구역 제목을 달아야 카드 위끝·아래끝이 나란히 맞는다.
+BODY_HEIGHT = f"calc({STAGE_HEIGHT} - 21px)"
 
 stage = st.columns([3, 2])
 with stage[0]:
-    st.markdown(ds.cp_html(cur_speaker, height=STAGE_HEIGHT), unsafe_allow_html=True)
-with stage[1]:
-    # 상황실 제목이 차지하는 만큼 빼야 전투지휘소 카드와 아래끝이 맞는다.
     st.markdown(
-        f'<div style="font-size:0.72rem; font-weight:700; letter-spacing:1px; '
-        f'color:{th.COLORS["accent_bright"]}; margin:0 0 7px;">상황실</div>'
-        + ds.rooms_grid_html(cur_speaker, height=f"calc({STAGE_HEIGHT} - 25px)"),
+        ds.section_label("전투지휘소", f"{len(dr.occupants(dr.cp_room()['id']))}명 착석")
+        + ds.cp_html(cur_speaker, height=BODY_HEIGHT),
+        unsafe_allow_html=True,
+    )
+with stage[1]:
+    st.markdown(
+        ds.section_label("상황실", f"{len(dr.situation_rooms())}개소")
+        + ds.rooms_grid_html(cur_speaker, height=BODY_HEIGHT),
         unsafe_allow_html=True,
     )
 
