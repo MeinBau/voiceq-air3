@@ -344,7 +344,7 @@ def build_map_svg(
 
     p: list[str] = [
         f'<svg viewBox="0 0 {W} {H}" width="100%" xmlns="http://www.w3.org/2000/svg" '
-        f'style="display:block; border-radius:6px; background:#0A0D08;">',
+        f'style="display:block; border-radius:6px; background:#0A0D08; max-height:100%;">',
         "<defs>",
         # 야간 위성사진 느낌의 비네트 — 가장자리로 갈수록 어두워지는 단일 톤
         # 배경보다, 중앙 감시 구역이 은은하게 도드라지는 편이 지도를 "찍은 사진"처럼

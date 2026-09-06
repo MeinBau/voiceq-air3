@@ -62,7 +62,7 @@ def render_cop_wall(
     cols: int = pb.GRID_COLS,
     rows: int = pb.GRID_ROWS,
     show_title: bool = True,
-    min_row_height: str = "150px",
+    row_track: str = "minmax(150px, auto)",
 ) -> None:
     """Video Wall 그리드. 1순위는 좌측 대형 화면을 차지한다.
 
@@ -93,7 +93,7 @@ def render_cop_wall(
 
     st.markdown(
         f'<div style="display:grid; grid-template-columns:repeat({cols}, 1fr); '
-        f'grid-template-rows:repeat({rows}, minmax({min_row_height}, auto)); gap:8px; '
+        f'grid-template-rows:repeat({rows}, {row_track}); gap:8px; '
         f'background:#05080B; padding:10px; border-radius:8px; '
         f'border:1px solid rgba(255,255,255,0.08);">' + "".join(panels) + "</div>",
         unsafe_allow_html=True,
@@ -128,8 +128,11 @@ def _panel_html(
 
     if is_map:
         active = [x for x in cop_layout if x.get("source_id") not in MAP_SOURCES]
+        # min-height:0 이 없으면 flex 자식이 내용보다 작아지지 못해, 행 높이가 고정된
+        # 벽면(시연 페이지)에서 지도가 타일을 밀고 나가 잘린다.
         body = (
-            f'<div style="flex:1; padding:6px; overflow:hidden;">'
+            f'<div style="flex:1; min-height:0; padding:6px; overflow:hidden; display:flex; '
+            f'align-items:center; justify-content:center;">'
             f"{mr.build_map_svg(active, compact=(cspan < 2), markers=map_markers)}</div>"
         )
         bg = "#0B0F14"

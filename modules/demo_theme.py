@@ -55,6 +55,7 @@ def css() -> str:
     Streamlit은 st.markdown에서 <script>를 제거하므로 애니메이션은 전부 CSS로 만든다.
     """
     var_lines = "\n".join(f"  --vc-{name}: {value};" for name, value in COLORS.items())
+    accent = COLORS["accent"]
     return f"""<style>
 :root {{
 {var_lines}
@@ -96,8 +97,15 @@ def css() -> str:
   border-bottom: 0;
 }}
 .vc-bubble.is-stale {{ opacity: 0.42; }}
+.vc-bubble.is-inline::after {{ display: none; }}
 @keyframes vc-pop {{
   from {{ opacity: 0; transform: translateY(6px) scale(0.97); }}
   to   {{ opacity: 1; transform: translateY(0)   scale(1); }}
+}}
+/* config.toml의 primaryColor는 본 앱의 빨강이다. 시연 페이지에서는 덱과 같은 파랑을
+   쓰고, 빨강은 '긴급'에만 남긴다. */
+[data-testid="stSidebar"] button[kind="primary"] {{
+  background-color: {accent};
+  border-color: {accent};
 }}
 </style>"""
