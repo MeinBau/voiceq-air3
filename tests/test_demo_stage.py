@@ -78,6 +78,19 @@ for entry in catalog:
             check(isinstance(full.get("operation_log_entry"), dict),
                   f"{sid} {i + 1}턴: full에 operation_log_entry가 없다")
 
+# 녹음 길이 — 재생 박자가 이 값을 따라간다. 못 읽으면 발언이 잘리고 겹친다.
+for entry in catalog:
+    sid = entry["id"]
+    for i in range(entry["turns"]):
+        seconds = dsc.audio_seconds(sid, i)
+        if dsc.audio_path(sid, i) is None:
+            check(seconds is None, f"{sid} {i + 1}턴: 녹음이 없는데 길이가 나온다")
+        else:
+            check(seconds is not None, f"{sid} {i + 1}턴: 녹음 길이를 못 읽었다")
+            check(1.0 < (seconds or 0) < 60.0,
+                  f"{sid} {i + 1}턴: 녹음 길이 {seconds}초가 말이 안 된다")
+check(dsc.audio_seconds(catalog[0]["id"], 999) is None, "범위 밖 턴이 길이를 돌려준다")
+
 sample = catalog[0]["id"]
 script = dsc.script(sample)
 
@@ -114,6 +127,15 @@ with tempfile.TemporaryDirectory() as tmp:
     check(dsc.load_baked(sample) is None, "깨진 굽기 파일에서 예외가 새어 나온다")
 dsc.DATA_DIR = real_dir
 check(dsc.DATA_DIR == real_dir, "데이터 경로를 되돌리지 못했다")
+durations = [
+    dsc.audio_seconds(c["id"], i)
+    for c in catalog
+    for i in range(c["turns"])
+    if dsc.audio_path(c["id"], i)
+]
+if durations:
+    print(f"[녹음] {len(durations)}개 — "
+          f"{min(durations):.1f}~{max(durations):.1f}초 (박자가 이 길이를 따라간다)")
 print(f"[시나리오] {len(catalog)}개 — " + ", ".join(
     f"{c['id']}({c['turns']}턴"
     + (",음성" if c["has_audio"] else "")

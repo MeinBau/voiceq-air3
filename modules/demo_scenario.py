@@ -138,3 +138,50 @@ def describe(baked: dict | None, scenario_id: str) -> str:
         return "구운 결과가 지금 대본과 다릅니다 — 다시 구워야 합니다."
     stamp = baked.get("baked_at") or ""
     return f"{baked.get('model', '?')}" + (f" · {stamp}" if stamp else "")
+
+
+def audio_seconds(scenario_id: str, index: int) -> float | None:
+    """그 턴 녹음의 길이(초). 녹음이 없거나 못 읽으면 None.
+
+    재생 박자를 녹음 길이에 맞추려고 쓴다. 고정 초로 두면 긴 발언이 잘리고 다음
+    발언이 그 위에 겹쳐 재생된다. m4a 컨테이너의 moov/mvhd 한 상자만 읽으면 되므로
+    외부 의존성(ffprobe·mutagen) 없이 표준 라이브러리로 끝낸다.
+    """
+    path = audio_path(scenario_id, index)
+    if path is None:
+        return None
+    try:
+        buf = path.read_bytes()
+    except OSError:
+        return None
+
+    def walk(start: int, end: int):
+        i = start
+        while i + 8 <= end:
+            size = int.from_bytes(buf[i : i + 4], "big")
+            box_type = buf[i + 4 : i + 8]
+            body = i + 8
+            if size == 1:  # 64비트 길이는 타입 뒤에 이어진다
+                size = int.from_bytes(buf[i + 8 : i + 16], "big")
+                body = i + 16
+            elif size == 0:  # 마지막 상자는 끝까지
+                size = end - i
+            if size < 8:
+                return
+            yield box_type, body, i + size
+            i += size
+
+    for box_type, body, stop in walk(0, len(buf)):
+        if box_type != b"moov":
+            continue
+        for inner_type, inner_body, _ in walk(body, stop):
+            if inner_type != b"mvhd":
+                continue
+            # mvhd는 버전 바이트 + 플래그 3바이트 뒤에 생성/수정 시각이 오고, 그다음이
+            # timescale과 duration이다. 버전 1은 시각이 8바이트씩이라 그만큼 밀린다.
+            offset = inner_body + (20 if buf[inner_body : inner_body + 1] == b"\x01" else 12)
+            width = 8 if buf[inner_body : inner_body + 1] == b"\x01" else 4
+            scale = int.from_bytes(buf[offset : offset + 4], "big")
+            ticks = int.from_bytes(buf[offset + 4 : offset + 4 + width], "big")
+            return ticks / scale if scale else None
+    return None

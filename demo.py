@@ -251,11 +251,26 @@ def play_scripted_turn(scenario_id: str, index: int, use_baked: bool) -> None:
 # 각 박자를 화면에 몇 초 두는지. 발표 영상으로 보려면 관객이 자막을 읽고, 화면이
 # 바뀌는 것을 보고, 무엇이 떴는지 확인할 시간이 각각 필요하다.
 BEAT_SECONDS = {
-    "card": 2.6,      # 시나리오 타이틀 카드
-    "speak": 3.4,     # 자막 + 녹음 재생
-    "apply": 2.8,     # 바뀐 벽면 감상
-    "ending": 4.2,    # 시나리오 마지막 화면은 조금 더 길게
+    "card": 3.0,      # 시나리오 타이틀 카드
+    "speak": 4.0,     # 자막 + 녹음 재생 — 녹음이 있으면 아래에서 그 길이로 늘린다
+    "apply": 3.2,     # 바뀐 벽면 감상
+    "ending": 4.6,    # 시나리오 마지막 화면은 조금 더 길게
 }
+
+# 녹음이 끝난 뒤 자막을 조금 더 두고 다음 발언으로 넘어간다. 0이면 말이 끝나자마자
+# 화면이 바뀌어 급하게 읽힌다.
+SPEAK_TAIL = 0.8
+
+
+def speak_hold(scenario_id: str, index: int) -> float:
+    """발언 박자를 얼마나 둘지. 녹음 길이보다 짧으면 다음 발언이 그 위에 겹쳐 재생된다.
+
+    녹음은 4~9초로 길이가 제각각이라 고정 초로는 맞출 수 없다.
+    """
+    seconds = dsc.audio_seconds(scenario_id, index)
+    if seconds is None:
+        return BEAT_SECONDS["speak"]
+    return max(BEAT_SECONDS["speak"], seconds + SPEAK_TAIL)
 
 
 def start_film(playlist: list[str]) -> None:
@@ -295,7 +310,7 @@ def advance_film() -> None:
         ss.film_card = ""
         speak_turn(scenario_id, ss.play_index)
         ss.film_phase = "apply"
-        ss.film_hold = BEAT_SECONDS["speak"]
+        ss.film_hold = speak_hold(scenario_id, ss.play_index)
         return
 
     # "apply" — 여기서 벽면이 바뀐다
@@ -478,12 +493,11 @@ cur_speaker = st.session_state.stage_speaker or None
 cur_text = st.session_state.stage_text or None
 
 latencies = st.session_state.display_latency_history
-# 사태가 둘이면 6칸이 필요하다 — 고정 2개(전장상황도·작전상황판)에 상황별 화면이
-# 최소 둘씩은 들어와야 두 사태가 모두 벽면에 보인다. 5로 자르면 뒤 상황의 화면이
-# 통째로 밀려난다. 대신 8칸에 6패널이면 1순위가 2×2를 못 받아(4+5>8) 전장상황도가
-# 가로로 납작해지는데, 지도 SVG가 비율을 지키며 줄어들도록 해 뒀으므로 작아질 뿐
-# 잘리지는 않는다.
-WALL_PANEL_CAP = 6
+# 8칸 벽면에 5패널이면 1순위(전장상황도)가 2×2를 받는다 — 지도를 크게 보여주려면
+# 이 수를 넘기면 안 된다(6패널이면 4+5>8이라 2×2가 안 나와 지도가 납작해진다).
+# 사태가 둘이어도 build_layout_multi가 상황마다 화면을 하나씩 번갈아 넣으므로,
+# 고정 2개(전장상황도·작전상황판) 뒤 세 칸 안에 두 사태가 모두 들어온다.
+WALL_PANEL_CAP = 5
 
 wall_layout = pb.retile(st.session_state.cop_layout[:WALL_PANEL_CAP], WALL_COLS)
 

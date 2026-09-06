@@ -446,34 +446,48 @@ def build_layout_multi(
         for source in resolve_slot(pinned_slot, utterance, used):
             _append(source, pinned_slot, "고정")
 
-    # 상황별 화면을 라운드로빈으로 섞는다. 상황이 하나뿐이면 예전과 완전히 같은
-    # 순서가 된다(그 상황의 screens를 앞에서부터 그대로 도는 것과 같다).
+    # 상황별 화면을 라운드로빈으로 섞는다. 상황이 하나뿐이면 그 상황의 screens를
+    # 앞에서부터 그대로 도는 것과 같아 예전과 완전히 같은 순서가 된다.
+    #
+    # 한 번에 화면 하나씩만 가져와 상황들을 번갈아 채운다. 예전에는 슬롯 하나가 해석한
+    # 소스를 전부 붙인 뒤 다음 상황으로 넘어갔는데, "해당 지역 cctv"처럼 한 슬롯이
+    # 여러 대를 내놓으면 그것만으로 자리가 차서 뒤 상황이 통째로 밀려났다. 두 사태를
+    # 함께 띄우려고 만든 라운드로빈이 정작 그때 무너진 셈이다.
     #
     # 상황이 둘 이상이면 화면 수를 panel_budget까지로 자른다. 안 자르면 두 상황의
     # 화면이 다 들어와 최대 10개가 되고, 그러면 벽면 12칸 중 8칸이 한 칸짜리가 되어
-    # "중요도에 따라 크기가 달라진다"는 전제가 무너진다. 라운드로빈이라 잘리는 것은
-    # 각 상황의 하위 화면이고, 두 상황의 상위 화면은 모두 살아남는다.
-    # 상황이 하나면 예전 규칙 그대로다 — 운용자가 플레이북에 직접 적어 넣은 화면은
-    # 그 자체가 의도이므로 budget을 넘더라도 자르지 않는다.
+    # "중요도에 따라 크기가 달라진다"는 전제가 무너진다. 상황이 하나면 운용자가
+    # 플레이북에 직접 적어 넣은 화면 자체가 의도이므로 budget을 넘더라도 자르지 않는다.
     screen_cap = MAX_PANELS if len(situations) == 1 else panel_budget()
-    screen_lists = [situation.get("screens", []) for situation in situations]
-    for rank in range(max((len(x) for x in screen_lists), default=0)):
-        for screens in screen_lists:
-            if rank >= len(screens) or len(layout) >= screen_cap:
-                continue
-            slot_name = screens[rank]
+    queues = [list(situation.get("screens", [])) for situation in situations]
+    buffers: list[list[tuple[str, dict]]] = [[] for _ in situations]
+
+    def _next_screen(index: int) -> tuple[str, dict] | None:
+        """상황 index가 다음에 띄울 화면 하나. 더 없으면 None."""
+        while True:
+            while buffers[index]:
+                slot_name, source = buffers[index].pop(0)
+                if source["id"] not in used:
+                    return slot_name, source
+            if not queues[index]:
+                return None
+            slot_name = queues[index].pop(0)
             resolved = resolve_slot(slot_name, utterance, used)
-            if not resolved:
-                if slot_name not in unresolved:
-                    unresolved.append(slot_name)
-                continue
-            for source in resolved:
-                if source["id"] in used:
-                    continue  # fixed 슬롯이 이미 쓰인 소스를 가리키는 경우만 여기 걸린다.
-                if len(layout) >= screen_cap:
-                    break
-                _append(source, slot_name, "상황")
-        if len(layout) >= screen_cap:
+            if resolved:
+                buffers[index].extend((slot_name, source) for source in resolved)
+            elif slot_name not in unresolved:
+                unresolved.append(slot_name)
+
+    while len(layout) < screen_cap:
+        progressed = False
+        for index in range(len(situations)):
+            if len(layout) >= screen_cap:
+                break
+            nxt = _next_screen(index)
+            if nxt:
+                _append(nxt[1], nxt[0], "상황")
+                progressed = True
+        if not progressed:
             break
 
     # --- 상시 표출 화면으로 보충 ---
