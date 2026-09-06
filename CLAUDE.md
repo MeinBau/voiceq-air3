@@ -86,7 +86,8 @@
 
 ```
 voice-cue/
-├── app.py                       # Streamlit 엔트리포인트: 접근 통제, 발언 입력, 5개 탭 UI
+├── app.py                       # Streamlit 엔트리포인트(운용): 접근 통제, 발언 입력, 5개 탭 UI
+├── demo.py                      # Streamlit 엔트리포인트(발표): 한 화면짜리 시연 무대
 ├── requirements.txt
 ├── .streamlit/
 │   ├── config.toml              # 다크 테마
@@ -102,17 +103,23 @@ voice-cue/
 │   ├── base_map.py              # 고정 배치도 격자(A~J×1~7) 좌표 변환
 │   ├── map_renderer.py          # base_map + sources를 위성사진 느낌 SVG로 렌더링, 클릭용 이미지 생성
 │   ├── map_icons.py             # 키워드 기반 자동 아이콘 프리셋(무인기/차량/침투 등) 관리
-│   └── layout_renderer.py       # COP 레이아웃/상황판/작전상황일지를 Streamlit HTML로 렌더링
+│   ├── layout_renderer.py       # COP 레이아웃/상황판/작전상황일지를 Streamlit HTML로 렌더링
+│   ├── demo_theme.py            # 시연 페이지 색·폰트 토큰 (발표 자료 덱에서 추출)
+│   ├── demo_rooms.py            # 시연 페이지 방 배치 — 화자를 전투지휘소/상황실에 배정
+│   ├── demo_stage.py            # 전투지휘소 평면도(SVG)·상황실 카드·상태바·자막 렌더링
+│   └── demo_scenario.py         # 시나리오 대본 읽기, LLM 판단 결과 굽기/재생
 ├── tools/
 │   └── gen_screen_sources.py    # data/screen_sources.json 생성기 (런타임 미사용, 결과만 커밋)
 ├── data/
 │   ├── organization.json        # 편제·화자 정의
 │   ├── cop_playbook.json        # 상황 유형별 화면 슬롯 정답 레이아웃 (앱에서 편집 가능)
 │   ├── map_icon_presets.json    # 자동 배치 아이콘 프리셋 (앱에서 편집 가능)
+│   ├── demo_rooms.json          # 시연 페이지 방 정의와 좌석 배치
 │   ├── base_map.json            # 고정 기지 배치도 정의 (시설·초소·격자)
 │   ├── screen_sources.json      # 화면 소스 카탈로그 270건 (생성됨, 커밋됨)
 │   ├── sample_dialogues/
-│   │   └── scenario1.json       # 시연용 샘플 발언 시퀀스 (ORE 훈련)
+│   │   ├── scenario1.json       # 시연용 샘플 발언 시퀀스 (ORE 훈련)
+│   │   └── scenario1.baked.json # (선택) 굽기 결과 — 없으면 실시간으로만 재생
 │   ├── context_memory.json      # (선택) persist_to_disk() 호출 시 생성, git 추적 안 함
 │   └── operation_log.json       # (선택) persist_to_disk() 호출 시 생성, git 추적 안 함
 ├── finetune/                    # 파인튜닝 (기획서 3-나 1단계) — 앱 실행과 완전히 무관
@@ -252,6 +259,8 @@ voice-cue/
 | 파인튜닝 모델 앱 연결 (few-shot 자동 생략) | ✅ 완료 — `llm_engine.is_finetuned` + 사이드바 체크박스 (`finetune/README.md` 8절) |
 | 외부 접속 암호 보호 | ✅ 완료 (원 기획서에는 없던 추가 구현) |
 | Whisper 음성 입력 STT | ✅ 완료 — 텍스트 입력과 별개의 UI, `OPENAI_API_KEY` 필요 (`modules/stt.py`) |
+| 발표용 시연 페이지 | ✅ 완료 — 비디오월 2×4 + 전투지휘소 평면도 + 상황실 4개를 한 화면에 (`streamlit run demo.py`) |
+| 시나리오 프리베이크·자동재생 | ✅ 완료 — 리허설에서 구운 판단 결과로 네트워크 없이 재생 (`modules/demo_scenario.py`) |
 | 파인튜닝 학습 데이터셋 구축 (기획서 3-나 1단계 "500건 이상") | ✅ 완료 — 1,527턴 / 3,054 SFT 샘플 (`finetune/gen_dataset.py`) |
 | 파인튜닝 평가 하네스 (기획서 3-라 4개 지표 / 4-다③) | ✅ 완료 — gold 자기검증 100% 통과 (`finetune/evaluate.py`) |
 | sLLM LoRA 학습 (기획서 4-다②) | ✅ Kaggle T4 x2에서 Qwen2.5-1.5B 1에폭 완주 (152스텝 33분). **튜닝 효과 실측: 상황유형 정확도 45%→75%, 키워드 정확도 60.6%→84.9%** (`finetune/README.md` 4절). 개발 PC GPU(GTX 970)로는 불가하므로 `finetune/kaggle_train.ipynb`를 Save & Run All로 실행 |

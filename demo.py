@@ -24,6 +24,7 @@ import streamlit as st
 
 from modules import context_memory as cm
 from modules import demo_rooms as dr
+from modules import demo_scenario as dsc
 from modules import demo_stage as ds
 from modules import demo_theme as th
 from modules import layout_renderer as lr
@@ -40,25 +41,54 @@ cm.init_session_state()
 st.session_state.setdefault("stage_speaker", "")
 st.session_state.setdefault("stage_text", "")
 st.session_state.setdefault("stage_voice", False)
+# 다음에 재생할 대본 줄 번호. len(대본)이면 재생이 끝난 상태다.
+st.session_state.setdefault("play_index", 0)
 
 SPEAKERS = org.speaker_titles()
 
 
-def run_turn(speaker: str, utterance: str, via_voice: bool = False) -> None:
-    """발언 하나를 처리한다. 화자를 먼저 켜고, 판단 결과로 벽면을 바꾼다.
+def apply_turn(
+    speaker: str,
+    utterance: str,
+    fast: dict | None,
+    full: dict | None,
+    display_latency: float | None = None,
+    via_voice: bool = False,
+) -> None:
+    """판단 결과를 화면 상태에 반영한다.
 
-    app.run_utterance와 같은 파이프라인이다. 여기서는 시연에 쓰지 않는 것(수동 보정
-    누적, 지연시간 이력)을 빼고 화면에 보이는 것만 남겼다.
+    실시간 호출과 구운 결과 재생이 반드시 이 함수 하나를 거치게 해서, 발표에서 트는
+    화면과 리허설에서 본 화면이 갈라지지 않게 한다.
     """
     st.session_state.stage_speaker = speaker
     st.session_state.stage_text = utterance
     st.session_state.stage_voice = via_voice
 
+    timestamp = time.strftime("%H:%M:%S")
+    if fast:
+        cm.apply_fast_result(fast, utterance)
+        if display_latency is not None:
+            st.session_state.display_latency_history.append(display_latency)
+    if full:
+        cm.apply_full_result(
+            full, speaker=speaker, timestamp=timestamp, utterance=utterance
+        )
+    st.session_state.utterance_log.append(
+        {"speaker": speaker, "utterance": utterance, "timestamp": timestamp}
+    )
+
+
+def run_turn(speaker: str, utterance: str, via_voice: bool = False) -> dict | None:
+    """실시간 LLM 호출. app.run_utterance와 같은 파이프라인이다.
+
+    굽기가 그대로 재활용할 수 있도록 판단 결과를 담은 기록을 돌려준다. 호출이 실패하면
+    None.
+    """
     try:
         client_factory, model, extra_body = engine.get_runtime()
     except RuntimeError as e:
         st.error(f"LLM 호출 실패: {e}")
-        return
+        return None
 
     summary = st.session_state.context_memory_summary
     result = engine.analyze_turn(
@@ -85,19 +115,35 @@ def run_turn(speaker: str, utterance: str, via_voice: bool = False) -> None:
         extra_body=extra_body,
     )
 
-    timestamp = time.strftime("%H:%M:%S")
-    if result.fast:
-        cm.apply_fast_result(result.fast.data, utterance)
-        st.session_state.display_latency_history.append(result.display_latency)
-    if result.full:
-        cm.apply_full_result(
-            result.full.data, speaker=speaker, timestamp=timestamp, utterance=utterance
-        )
+    fast = result.fast.data if result.fast else None
+    full = result.full.data if result.full else None
+    apply_turn(speaker, utterance, fast, full, result.display_latency, via_voice)
     for message in result.errors:
         st.warning(message)
-    st.session_state.utterance_log.append(
-        {"speaker": speaker, "utterance": utterance, "timestamp": timestamp}
-    )
+
+    return {
+        "speaker": speaker,
+        "utterance": utterance,
+        "fast": fast,
+        "full": full,
+        "display_latency": result.display_latency,
+    }
+
+
+def play_scripted_turn(index: int, use_baked: bool) -> None:
+    """대본의 한 줄을 재생한다. 구운 결과가 있으면 LLM을 부르지 않는다."""
+    turn = dsc.script()[index]
+    if use_baked:
+        baked_turn = (dsc.load_baked() or {})["turns"][index]
+        apply_turn(
+            baked_turn["speaker"],
+            baked_turn["utterance"],
+            baked_turn.get("fast"),
+            baked_turn.get("full"),
+            baked_turn.get("display_latency"),
+        )
+    else:
+        run_turn(turn["speaker"], turn["utterance"])
 
 
 # ---------- 조작 (발표 중에는 접어 둔다) ----------
@@ -119,20 +165,72 @@ with st.sidebar:
             st.warning("발언 내용을 입력하세요.")
 
     st.divider()
-    if st.button("샘플 시나리오 재생", use_container_width=True):
-        import json
-        from pathlib import Path
+    st.caption("시나리오 재생")
 
-        turns = json.loads(
-            (Path(__file__).parent / "data" / "sample_dialogues" / "scenario1.json")
-            .read_text(encoding="utf-8")
-        )
-        bar = st.progress(0.0)
-        for i, turn in enumerate(turns):
-            with st.spinner(f"[{turn['speaker']}] {turn['utterance'][:24]}…"):
-                run_turn(turn["speaker"], turn["utterance"])
-            bar.progress((i + 1) / len(turns))
+    script = dsc.script()
+    baked = dsc.load_baked()
+    can_replay = dsc.matches_script(baked)
+    # 구운 결과가 없거나 대본과 어긋나면 실시간 외에는 고를 것이 없다.
+    sources = ["프리베이크", "실시간 LLM"] if can_replay else ["실시간 LLM"]
+    source = st.selectbox("재생 소스", sources)
+    # 자동 재생은 화면 맨 아래에서 돌기 때문에 이 선택을 상태로 넘겨야 한다.
+    use_baked = source == "프리베이크"
+    st.session_state.stage_use_baked = use_baked
+    st.caption(dsc.describe(baked))
+
+    idx = st.session_state.play_index
+    done = idx >= len(script)
+    st.progress(idx / len(script), text=f"{idx} / {len(script)} 발언")
+
+    step_cols = st.columns(2)
+    if step_cols[0].button("처음으로", use_container_width=True):
+        st.session_state.play_index = 0
+        st.session_state.stage_auto = False
         st.rerun()
+    if step_cols[1].button(
+        "다음 발언", type="primary", use_container_width=True, disabled=done
+    ):
+        with st.spinner(f"[{script[idx]['speaker']}] 처리 중…"):
+            play_scripted_turn(idx, use_baked)
+        st.session_state.play_index = idx + 1
+        st.rerun()
+
+    # 자동 재생은 화면 맨 아래에서 처리한다 — 이번 발언이 그려진 뒤에 쉬어야 관객이
+    # 화면 변화를 볼 수 있기 때문이다.
+    # key를 주지 않는다. key가 붙은 상태는 그 위젯이 만들어진 뒤로는 못 바꾸는데
+    # (StreamlitWidgetAlreadyInstantiatedError), 재생이 끝났을 때와 굽기를 시작할 때
+    # 코드가 자동 재생을 꺼야 하기 때문이다. 대신 value로 넣고 결과를 되돌려 저장한다.
+    auto = st.toggle(
+        "자동 재생", value=st.session_state.get("stage_auto", False), disabled=done
+    )
+    st.session_state.stage_auto = auto and not done
+    st.slider("발언 간격(초)", 0.5, 5.0, 2.0, 0.5, key="stage_pause")
+    if st.session_state.get("stage_auto"):
+        st.caption("자동 재생 중에는 간격만큼 화면이 멈춰 있어 조작이 늦게 먹습니다.")
+
+    st.divider()
+    st.caption("굽기 — 실시간 LLM으로 한 번 돌려 판단 결과를 저장")
+    if st.button("시나리오 굽기", use_container_width=True):
+        st.session_state.play_index = 0
+        st.session_state.stage_auto = False
+        entries: list[dict] = []
+        bar = st.progress(0.0)
+        for i, turn in enumerate(script):
+            with st.spinner(f"[{turn['speaker']}] {turn['utterance'][:22]}…"):
+                record = run_turn(turn["speaker"], turn["utterance"])
+            if record is None:
+                st.error(f"{i + 1}번째 발언에서 호출이 실패해 굽기를 중단했습니다.")
+                break
+            entries.append(record)
+            bar.progress((i + 1) / len(script))
+        else:
+            path = dsc.save_baked(
+                entries,
+                model=str(st.session_state.get("selected_model", "")),
+                baked_at=time.strftime("%Y-%m-%d %H:%M"),
+            )
+            st.success(f"저장했습니다 — {path.name}")
+        st.session_state.play_index = len(entries)
 
     st.divider()
     # 리허설용. LLM을 부르지 않고 플레이북만으로 벽면을 채워, 네트워크 없이 배치를
@@ -148,7 +246,7 @@ with st.sidebar:
     if st.button("초기화", use_container_width=True):
         for key in ("cop_layout", "situation_board", "operation_log", "utterance_log",
                     "active_situations", "situation_type", "map_markers",
-                    "stage_speaker", "stage_text", "stage_voice"):
+                    "stage_speaker", "stage_text", "stage_voice", "play_index"):
             st.session_state.pop(key, None)
         cm.init_session_state()
         st.rerun()
@@ -214,3 +312,14 @@ st.markdown(
     ds.subtitle_html(cur_speaker, cur_text, st.session_state.stage_voice),
     unsafe_allow_html=True,
 )
+
+# 자동 재생 — 이번 발언이 다 그려진 뒤에 쉬고, 다음 발언을 처리한 뒤 다시 그린다.
+# 이 순서여야 관객이 발언마다 화면이 바뀌는 것을 볼 수 있다. 위쪽(사이드바)에서
+# 처리하면 아직 그리지도 않은 화면을 두고 쉬게 된다.
+if st.session_state.get("stage_auto"):
+    if st.session_state.play_index < len(dsc.script()):
+        time.sleep(st.session_state.get("stage_pause", 2.0))
+        next_index = st.session_state.play_index
+        play_scripted_turn(next_index, st.session_state.get("stage_use_baked", False))
+        st.session_state.play_index = next_index + 1
+        st.rerun()
