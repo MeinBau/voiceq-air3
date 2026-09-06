@@ -189,39 +189,35 @@ with st.sidebar:
                     f"영향력 {voice_info['influence']:.2f}"
                 )
 
-        audio_value = st.audio_input("발언 녹음", key="voice_audio_input")
-        if audio_value is not None and st.button(
-            "음성 → 텍스트 변환", use_container_width=True, key="transcribe_btn"
-        ):
-            with st.spinner("Whisper로 변환 중..."):
+        # 녹음 정지 = 처리. 위젯 값이 바뀔 때(새 녹음 또는 삭제)만 콜백이 불리므로,
+        # 다른 버튼을 눌러 생기는 재실행에서 같은 녹음을 또 처리하지 않는다.
+        # 전사 결과를 확인/수정하는 중간 단계는 뺐다 — 인식된 문장은 아래 캡션과
+        # "Context Memory / 발언 이력" 탭에서 그대로 보인다.
+        def _mark_voice_pending() -> None:
+            st.session_state.voice_pending = True
+
+        audio_value = st.audio_input(
+            "발언 녹음 (정지하면 바로 처리)", key="voice_audio_input",
+            on_change=_mark_voice_pending,
+        )
+        if st.session_state.pop("voice_pending", False) and audio_value is not None:
+            if not voice_speaker:
+                st.warning("화자를 먼저 입력하세요.")
+            else:
                 try:
-                    st.session_state.voice_transcript = stt.transcribe(audio_value.getvalue())
+                    with st.spinner("Whisper로 변환 중..."):
+                        transcript = stt.transcribe(audio_value.getvalue())
                 except RuntimeError as e:
                     st.error(str(e))
                 except Exception as e:  # noqa: BLE001 — SDK/전송 계층 예외를 트레이스백 대신 메시지로 보여준다.
                     st.error(f"음성 변환 중 오류: {type(e).__name__}: {e}")
+                else:
+                    st.session_state.voice_transcript = transcript
+                    with st.spinner("분석 중..."):
+                        run_utterance(voice_speaker, transcript)
 
         if st.session_state.voice_transcript:
-            # key를 지정하지 않는다. key가 있는 위젯은 한 번 그려진 뒤로 value= 인자를
-            # 무시하고 자기 이전 입력만 계속 보여주므로, 두 번째로 녹음해 변환하면
-            # 새 전사 결과 대신 첫 번째 결과가 그대로 남아 있었다. 그 상태로 처리하면
-            # 방금 말한 내용이 아니라 이전 발언이 일지에 들어간다.
-            # (Context Memory 편집창에서 같은 문제를 이미 겪어 같은 방식으로 고쳤다.)
-            edited_transcript = st.text_area(
-                "변환된 발언 (필요하면 수정 후 처리)",
-                value=st.session_state.voice_transcript,
-                height=100,
-            )
-            if st.button(
-                "음성 발언 처리", type="primary", use_container_width=True, key="process_voice_btn"
-            ):
-                if not voice_speaker or not edited_transcript.strip():
-                    st.warning("화자와 발언 내용을 확인하세요.")
-                else:
-                    with st.spinner("분석 중..."):
-                        run_utterance(voice_speaker, edited_transcript.strip())
-                    st.session_state.voice_transcript = ""
-                    st.rerun()
+            st.caption(f"마지막 인식: {st.session_state.voice_transcript}")
 
     st.divider()
     st.subheader("시연 시나리오 자동 재생")

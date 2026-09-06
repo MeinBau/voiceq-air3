@@ -60,7 +60,7 @@
   - 발언 하나당 **두 번의 LLM 호출을 병렬(스레드)로** 던짐 — 자세한 이유는 6절 참고
 - **STT**: OpenAI Whisper API (`whisper-1`, 한국어 고정) — `modules/stt.py`. 사이드바에
   텍스트 입력과 별도의 "음성 입력 (Whisper)" 섹션이 있어, 화자 선택 → `st.audio_input`으로
-  녹음 → 변환된 텍스트를 확인/수정 후 처리하는 흐름. LLM 판단 경로의 공급자 선택(OpenRouter/
+  녹음 → 녹음을 정지하면 즉시 전사·처리되는 흐름. LLM 판단 경로의 공급자 선택(OpenRouter/
   OpenAI/로컬)과 무관하게 항상 OpenAI Whisper API를 쓰므로 **`OPENAI_API_KEY`가 별도로
   필요**함 (OpenRouter는 오디오 전사를 지원하지 않음). 키가 없으면 안내 문구만 보이고
   텍스트 입력 경로는 그대로 동작 (`stt.is_configured()`)
@@ -139,9 +139,9 @@ voice-cue/
 - **텍스트 입력** (기본) — 화자는 `organization.json` 기반 드롭다운(또는 "직접입력")으로
   고르고, 발언은 텍스트 영역에 입력
 - **음성 입력** (별도 UI, `modules/stt.py`) — 화자를 동일하게 드롭다운으로 고른 뒤
-  `st.audio_input`으로 녹음 → Whisper API로 전사 → 전사 결과를 텍스트 영역에서 확인/수정
-  → 확정 버튼을 눌러야 처리됨 (오인식 텍스트가 그대로 일지에 들어가지 않도록 확인 단계를
-  둠)
+  `st.audio_input`으로 녹음 → 녹음 정지 즉시 Whisper API로 전사 → 바로 처리됨. 중간 확인
+  버튼은 없으며, 인식된 문장은 사이드바 캡션("마지막 인식")과 발언 이력 탭에서 확인.
+  `on_change` 콜백이 켜는 `voice_pending` 플래그로 새 녹음일 때만 한 번 처리한다
 ```json
 { "speaker": "항공작전상황담당", "utterance": "무인기 2대 식별되었습니다.", "timestamp": "14:02:07" }
 ```
@@ -209,7 +209,7 @@ voice-cue/
 ## 6. 핵심 파이프라인 (실제 구현)
 
 1. **발언 입력**: 사이드바에서 화자(편제 드롭다운 또는 직접입력) + 발언 텍스트 입력,
-   "음성 입력" 섹션에서 녹음 → Whisper 전사 → 확인 후 처리, 또는 "샘플 시나리오 재생"으로
+   "음성 입력" 섹션에서 녹음 정지 → Whisper 전사 → 즉시 처리, 또는 "샘플 시나리오 재생"으로
    `sample_dialogues/scenario1.json`을 순차 재생 — 세 경로 모두 동일한 `run_utterance()`로
    수렴
 2. **FAST/FULL 병렬 LLM 호출** (`llm_engine.analyze_turn`): 두 스레드가 각자 클라이언트를
