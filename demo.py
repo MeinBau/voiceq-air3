@@ -191,15 +191,13 @@ STAGE_HEIGHT = "32vh"
 
 stage = st.columns([3, 2])
 with stage[0]:
-    st.markdown(ds.cp_html(cur_speaker, cur_text, height=STAGE_HEIGHT), unsafe_allow_html=True)
+    st.markdown(ds.cp_html(cur_speaker, height=STAGE_HEIGHT), unsafe_allow_html=True)
 with stage[1]:
     # 상황실 제목이 차지하는 만큼 빼야 전투지휘소 카드와 아래끝이 맞는다.
     st.markdown(
         f'<div style="font-size:0.72rem; font-weight:700; letter-spacing:1px; '
         f'color:{th.COLORS["accent_bright"]}; margin:0 0 7px;">상황실</div>'
-        + ds.rooms_grid_html(
-            cur_speaker, cur_text, height=f"calc({STAGE_HEIGHT} - 25px)"
-        ),
+        + ds.rooms_grid_html(cur_speaker, height=f"calc({STAGE_HEIGHT} - 25px)"),
         unsafe_allow_html=True,
     )
 

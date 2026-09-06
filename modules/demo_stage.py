@@ -1,14 +1,13 @@
 """시연 페이지의 '무대' 렌더링 — 전투지휘소 회의실과 상황실 4개를 HTML로 그린다.
 
-발언한 사람 위에 게임 NPC처럼 말풍선이 뜨고, 그 판단 결과로 위쪽 비디오월이 바뀌는
-것을 한 화면에서 보여주기 위한 것이다. 색은 발표 자료에서 뽑은 modules/demo_theme의
-토큰만 쓴다.
+누가 말하고 있는지는 좌석·카드 강조로, 무슨 말을 했는지는 화면 하단 자막 바
+(subtitle_html)로 보여준다. 말풍선은 자막 바와 같은 내용을 두 번 말하는 셈이라
+두지 않는다.
+
+색은 발표 자료에서 뽑은 modules/demo_theme의 토큰만 쓴다.
 
 여기 있는 함수는 전부 문자열만 만들고 Streamlit을 부르지 않는다. 화면 없이 출력을
 검사할 수 있어야 배치가 깨졌는지 확인하기 쉽기 때문이다. 실제 표출은 demo.py가 한다.
-
-JS는 쓸 수 없다 — st.markdown이 <script>를 제거한다. 등장 효과는 전부 CSS
-애니메이션(demo_theme.css의 @keyframes vc-pop)이다.
 """
 
 from __future__ import annotations
@@ -35,45 +34,13 @@ _RANK_COLOR = {
 }
 
 
-def _floating_bubble(text: str, align: str = "center") -> str:
-    """좌석 위로 떠오르는 말풍선. 감싸는 쪽이 position:relative여야 한다.
-
-    상석(단장·부단장)은 전투지휘소 카드의 오른쪽 끝에 앉아 있어서, 가운데 정렬로
-    띄우면 말풍선이 옆 칸의 상황실 카드를 덮는다. align="right"로 카드 안쪽에 붙인다.
-    """
-    place = (
-        "right:0; left:auto; transform:none;"
-        if align == "right"
-        else "left:50%; transform:translateX(-50%);"
-    )
-    return (
-        f'<div class="vc-bubble" style="position:absolute; bottom:calc(100% + 9px); {place} '
-        f'width:max-content; max-width:250px; z-index:5; '
-        f'text-align:left;">{_esc(text)}</div>'
-    )
-
-
-def _inline_bubble(text: str) -> str:
-    """카드 안에 자리를 차지하는 말풍선.
-
-    상황실은 2×2 격자라 카드 위로 띄우면 윗줄 카드를 가린다. 꼬리 없이 카드
-    안에서 펼쳐지게 한다.
-    """
-    return (
-        f'<div class="vc-bubble is-inline" style="position:relative; margin:6px 0 2px; '
-        f'text-align:left;">{_esc(text)}</div>'
-    )
-
-
-def seat_html(
-    title: str, speaking_text: str | None = None, bubble_align: str = "center"
-) -> str:
-    """회의 테이블의 좌석 하나. 발언 중이면 말풍선과 함께 강조된다."""
+def seat_html(title: str, speaking: bool = False) -> str:
+    """회의 테이블의 좌석 하나. 발언 중이면 테두리와 이름이 켜진다."""
     info = org.lookup(title) or {}
     rank = str(info.get("rank", ""))
     color = _RANK_COLOR.get(rank, th.COLORS["surface_hi"])
 
-    if speaking_text:
+    if speaking:
         ring = (
             f"border:2px solid {th.COLORS['accent_bright']}; "
             f"box-shadow:0 0 14px rgba(79,209,255,0.55);"
@@ -84,9 +51,8 @@ def seat_html(
         name_color = "rgba(255,255,255,0.72)"
 
     return (
-        '<div style="position:relative; display:flex; flex-direction:column; '
+        '<div style="display:flex; flex-direction:column; '
         'align-items:center; gap:3px; width:72px;">'
-        + (_floating_bubble(speaking_text, bubble_align) if speaking_text else "")
         + f'<div style="width:30px; height:30px; border-radius:50%; background:{color}; '
         f'{ring} display:flex; align-items:center; justify-content:center; '
         f'font-size:0.52rem; font-weight:700; color:#fff;">{_esc(rank)}</div>'
@@ -96,10 +62,8 @@ def seat_html(
     )
 
 
-def _seat_row(titles: list[str], speaker: str | None, text: str | None) -> str:
-    seats = "".join(
-        seat_html(t, text if (speaker == t and text) else None) for t in titles
-    )
+def _seat_row(titles: list[str], speaker: str | None) -> str:
+    seats = "".join(seat_html(t, speaking=(t == speaker)) for t in titles)
     return (
         '<div style="display:flex; justify-content:center; gap:9px; flex-wrap:wrap;">'
         + seats
@@ -107,9 +71,7 @@ def _seat_row(titles: list[str], speaker: str | None, text: str | None) -> str:
     )
 
 
-def cp_html(
-    speaker: str | None = None, text: str | None = None, height: str = "auto"
-) -> str:
+def cp_html(speaker: str | None = None, height: str = "auto") -> str:
     """전투지휘소. 좌측 비디오 패널 + 상석 + 회의 테이블 위/아래 좌석 줄.
 
     height를 주면 그 높이를 채우도록 좌석 줄과 테이블이 세로로 벌어진다. 발표 화면을
@@ -141,10 +103,7 @@ def cp_html(
     head_col = (
         '<div style="display:flex; flex-direction:column; justify-content:center; '
         'gap:8px; flex:none; padding-left:4px;">'
-        + "".join(
-            seat_html(t, text if (speaker == t and text) else None, bubble_align="right")
-            for t in head
-        )
+        + "".join(seat_html(t, speaking=(t == speaker)) for t in head)
         + "</div>"
     )
 
@@ -158,19 +117,19 @@ def cp_html(
         + video_panel
         + '<div style="flex:1; display:flex; flex-direction:column; '
         'justify-content:space-around; padding-top:22px;">'
-        + _seat_row(top, speaker, text)
+        + _seat_row(top, speaker)
         + table
-        + _seat_row(bottom, speaker, text)
+        + _seat_row(bottom, speaker)
         + "</div>"
         + head_col
         + "</div></div>"
     )
 
 
-def room_card_html(room: dict, speaker: str | None = None, text: str | None = None) -> str:
-    """상황실 카드 하나. 그 방 사람이 발언하면 카드가 켜지고 말풍선이 뜬다."""
+def room_card_html(room: dict, speaker: str | None = None) -> str:
+    """상황실 카드 하나. 그 방 사람이 발언하면 카드와 그 사람 배지가 켜진다."""
     people = dr.occupants(room["id"])
-    active = bool(speaker and text and speaker in people)
+    active = bool(speaker and speaker in people)
     cls = "vc-card is-speaking" if active else "vc-card"
 
     if people:
@@ -198,16 +157,13 @@ def room_card_html(room: dict, speaker: str | None = None, text: str | None = No
         f'color:{th.COLORS["accent_bright"] if active else "rgba(255,255,255,0.86)"}; '
         f'margin-bottom:5px;">{_esc(room["name"])}</div>'
         + f'<div style="line-height:1.5;">{body}</div>'
-        + (_inline_bubble(text) if active else "")
         + "</div>"
     )
 
 
-def rooms_grid_html(
-    speaker: str | None = None, text: str | None = None, height: str = "auto"
-) -> str:
+def rooms_grid_html(speaker: str | None = None, height: str = "auto") -> str:
     """상황실 4개를 2×2로. height를 주면 네 칸이 그 높이를 고르게 나눠 갖는다."""
-    cards = "".join(room_card_html(r, speaker, text) for r in dr.situation_rooms())
+    cards = "".join(room_card_html(r, speaker) for r in dr.situation_rooms())
     return (
         '<div style="display:grid; grid-template-columns:repeat(2, 1fr); '
         f'grid-template-rows:repeat(2, 1fr); gap:8px; height:{height}; '
@@ -216,7 +172,7 @@ def rooms_grid_html(
 
 
 def subtitle_html(speaker: str | None, text: str | None, via_voice: bool = False) -> str:
-    """하단 자막 바. 지금 발언 전문을 크게 보여준다."""
+    """하단 자막 바. 지금 발언 전문을 크게 보여준다 — 발언 내용을 보여주는 유일한 자리다."""
     if not speaker or not text:
         return (
             '<div class="vc-card" style="padding:10px 14px; font-size:0.75rem; '

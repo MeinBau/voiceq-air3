@@ -11,7 +11,7 @@
     1B2740  (41)  가장 어두운 바탕 (비디오월 뒤)
     E8F0FA  (36)  밝은 표면
     D5DDE8  (34)  구분선
-    4FD1FF  (23)  하이라이트 시안 (지금 발언 중인 화자)
+    4FD1FF  (23)  하이라이트 시안 (지금 발언 중인 화자·상황실)
     2E9E6B  (13)  정상
     D98A12   (8)  주의
     C8102E   (4)  긴급
@@ -76,31 +76,6 @@ def css() -> str:
 .vc-card.is-speaking {{
   border-color: var(--vc-accent_bright);
   box-shadow: 0 0 0 1px var(--vc-accent_bright), 0 0 18px rgba(79, 209, 255, 0.28);
-}}
-.vc-bubble {{
-  background: var(--vc-paper);
-  color: var(--vc-bg_deep);
-  border-radius: 10px;
-  padding: 7px 11px;
-  font-size: 0.78rem;
-  line-height: 1.35;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
-  animation: vc-pop 0.24s ease-out both;
-}}
-.vc-bubble::after {{
-  content: "";
-  position: absolute;
-  bottom: -7px;
-  left: 18px;
-  border: 7px solid transparent;
-  border-top-color: var(--vc-paper);
-  border-bottom: 0;
-}}
-.vc-bubble.is-stale {{ opacity: 0.42; }}
-.vc-bubble.is-inline::after {{ display: none; }}
-@keyframes vc-pop {{
-  from {{ opacity: 0; transform: translateY(6px) scale(0.97); }}
-  to   {{ opacity: 1; transform: translateY(0)   scale(1); }}
 }}
 /* 발표 화면은 한 화면에 꽉 차야 한다. Streamlit 기본 상단 패딩이 약 6rem이라
    그대로 두면 아래가 잘리거나 스크롤이 생긴다. */
