@@ -204,7 +204,12 @@ with st.sidebar:
         "자동 재생", value=st.session_state.get("stage_auto", False), disabled=done
     )
     st.session_state.stage_auto = auto and not done
-    st.slider("발언 간격(초)", 0.5, 5.0, 2.0, 0.5, key="stage_pause")
+    # 슬라이더가 아니라 선택형이다. Streamlit 슬라이더의 채워진 트랙은 primaryColor를
+    # 인라인 그라데이션으로 구워 넣어 이 페이지 팔레트로 못 바꾸고(값마다 달라진다),
+    # 발표 중에는 드래그보다 클릭 한 번이 빠르다.
+    st.selectbox(
+        "발언 간격(초)", [1.0, 1.5, 2.0, 3.0, 5.0], index=2, key="stage_pause"
+    )
     if st.session_state.get("stage_auto"):
         st.caption("자동 재생 중에는 간격만큼 화면이 멈춰 있어 조작이 늦게 먹습니다.")
 
