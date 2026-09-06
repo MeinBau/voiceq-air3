@@ -170,54 +170,6 @@ with st.sidebar:
             with st.spinner("분석 중..."):
                 run_utterance(speaker_choice, utterance_text.strip())
 
-    st.divider()
-    st.subheader("음성 입력 (Whisper)")
-    if not stt.is_configured():
-        st.caption(
-            "⚠ OPENAI_API_KEY가 설정되지 않아 음성 입력을 쓸 수 없습니다. "
-            "위 텍스트 입력을 이용하거나 .streamlit/secrets.toml에 키를 추가하세요."
-        )
-    else:
-        voice_speaker = st.selectbox("화자", SPEAKERS, key="voice_speaker")
-        if voice_speaker == "직접입력":
-            voice_speaker = st.text_input("화자명 직접 입력", value="", key="voice_speaker_manual")
-        else:
-            voice_info = org.lookup(voice_speaker)
-            if voice_info:
-                st.caption(
-                    f"{voice_info['rank']} · {', '.join(voice_info['domain'])} · "
-                    f"영향력 {voice_info['influence']:.2f}"
-                )
-
-        # 녹음 정지 = 처리. 위젯 값이 바뀔 때(새 녹음 또는 삭제)만 콜백이 불리므로,
-        # 다른 버튼을 눌러 생기는 재실행에서 같은 녹음을 또 처리하지 않는다.
-        # 전사 결과를 확인/수정하는 중간 단계는 뺐다 — 인식된 문장은 아래 캡션과
-        # "Context Memory / 발언 이력" 탭에서 그대로 보인다.
-        def _mark_voice_pending() -> None:
-            st.session_state.voice_pending = True
-
-        audio_value = st.audio_input(
-            "발언 녹음 (정지하면 바로 처리)", key="voice_audio_input",
-            on_change=_mark_voice_pending,
-        )
-        if st.session_state.pop("voice_pending", False) and audio_value is not None:
-            if not voice_speaker:
-                st.warning("화자를 먼저 입력하세요.")
-            else:
-                try:
-                    with st.spinner("Whisper로 변환 중..."):
-                        transcript = stt.transcribe(audio_value.getvalue())
-                except RuntimeError as e:
-                    st.error(str(e))
-                except Exception as e:  # noqa: BLE001 — SDK/전송 계층 예외를 트레이스백 대신 메시지로 보여준다.
-                    st.error(f"음성 변환 중 오류: {type(e).__name__}: {e}")
-                else:
-                    st.session_state.voice_transcript = transcript
-                    with st.spinner("분석 중..."):
-                        run_utterance(voice_speaker, transcript)
-
-        if st.session_state.voice_transcript:
-            st.caption(f"마지막 인식: {st.session_state.voice_transcript}")
 
     st.divider()
     st.subheader("시연 시나리오 자동 재생")
@@ -353,6 +305,59 @@ with st.sidebar:
 
 # ---------- 메인 화면 ----------
 st.title("전투지휘소 상황판 — VOICE-CUE")
+
+# 음성 입력은 사이드바가 아니라 본문에 둔다. Streamlit 1.63 기준 st.audio_input을
+# 사이드바에 넣으면, 녹음을 정지한 뒤 따라오는 재실행에서 사이드바가 테마 객체를 새로
+# 만들고 위젯이 그걸 보고 파형 컨트롤러를 부수며 방금 녹음의 blob URL까지 해제한다.
+# 업로드는 204로 성공했는데도 "An error has occurred, please try again."이 뜨는 이유다.
+# 본문 영역에서는 테마 객체가 유지돼 재현되지 않는다 (3줄짜리 앱으로 확인).
+if stt.is_configured():
+    col_spk, col_rec = st.columns([1, 2])
+    with col_spk:
+        voice_speaker = st.selectbox("음성 화자", SPEAKERS, key="voice_speaker")
+        if voice_speaker == "직접입력":
+            voice_speaker = st.text_input("화자명 직접 입력", value="", key="voice_speaker_manual")
+        else:
+            voice_info = org.lookup(voice_speaker)
+            if voice_info:
+                st.caption(
+                    f"{voice_info['rank']} · {', '.join(voice_info['domain'])} · "
+                    f"영향력 {voice_info['influence']:.2f}"
+                )
+    with col_rec:
+        # 녹음 정지 = 처리. 위젯 값이 바뀔 때(새 녹음 또는 삭제)만 콜백이 불리므로,
+        # 다른 버튼을 눌러 생기는 재실행에서 같은 녹음을 또 처리하지 않는다.
+        # 전사 결과를 확인/수정하는 중간 단계는 뺐다 — 인식된 문장은 아래 캡션과
+        # "Context Memory / 발언 이력" 탭에서 그대로 보인다.
+        def _mark_voice_pending() -> None:
+            st.session_state.voice_pending = True
+
+        audio_value = st.audio_input(
+            "발언 녹음 (정지하면 바로 처리)", key="voice_audio_input",
+            on_change=_mark_voice_pending,
+        )
+        if st.session_state.pop("voice_pending", False) and audio_value is not None:
+            if not voice_speaker:
+                st.warning("화자를 먼저 입력하세요.")
+            else:
+                try:
+                    with st.spinner("Whisper로 변환 중..."):
+                        transcript = stt.transcribe(audio_value.getvalue())
+                except RuntimeError as e:
+                    st.error(str(e))
+                except Exception as e:  # noqa: BLE001 — SDK/전송 계층 예외를 트레이스백 대신 메시지로 보여준다.
+                    st.error(f"음성 변환 중 오류: {type(e).__name__}: {e}")
+                else:
+                    st.session_state.voice_transcript = transcript
+                    with st.spinner("분석 중..."):
+                        run_utterance(voice_speaker, transcript)
+        if st.session_state.voice_transcript:
+            st.caption(f"마지막 인식: {st.session_state.voice_transcript}")
+else:
+    st.caption(
+        "⚠ OPENAI_API_KEY가 설정되지 않아 음성 입력을 쓸 수 없습니다. "
+        "사이드바의 텍스트 입력을 이용하거나 .streamlit/secrets.toml에 키를 추가하세요."
+    )
 
 tab_wall, tab_book, tab_log, tab_memory, tab_map_ops = st.tabs(
     ["COP 화면 구성", "COP 플레이북", "작전상황일지", "Context Memory / 발언 이력", "전장상황도 조작"]
