@@ -102,6 +102,16 @@ def css() -> str:
   from {{ opacity: 0; transform: translateY(6px) scale(0.97); }}
   to   {{ opacity: 1; transform: translateY(0)   scale(1); }}
 }}
+/* 발표 화면은 한 화면에 꽉 차야 한다. Streamlit 기본 상단 패딩이 약 6rem이라
+   그대로 두면 아래가 잘리거나 스크롤이 생긴다. */
+[data-testid="stMain"] .block-container {{
+  /* 3.2rem 아래로는 제목 윗부분이 떠 있는 툴바(Deploy 버튼 줄)에 가려 잘린다. */
+  padding-top: 3.2rem;
+  padding-bottom: 0.5rem;
+}}
+/* 블록 사이 기본 간격도 줄인다 — 요소가 6개뿐인데 간격이 세로를 잠식한다. */
+[data-testid="stMain"] [data-testid="stVerticalBlock"] {{ gap: 0.5rem; }}
+
 /* config.toml의 primaryColor는 본 앱의 빨강이다. 시연 페이지에서는 덱과 같은 파랑을
    쓰고, 빨강은 '긴급'에만 남긴다. */
 [data-testid="stSidebar"] button[kind="primary"] {{

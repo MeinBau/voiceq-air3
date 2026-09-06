@@ -182,22 +182,27 @@ lr.render_cop_wall(
     rows=WALL_ROWS,
     show_title=False,
     # 고정 높이 트랙. auto로 두면 지도 패널이 늘어나 상황실이 화면 밖으로 밀린다.
-    row_track="172px",
+    # 한 화면(100vh)에 꽉 채우기 위한 세로 배분. 패널 자체의 min-height:150px보다
+    # 작아지지 않게 max()로 묶는다.
+    row_track="max(150px, 22vh)",
 )
 
-st.write("")
+STAGE_HEIGHT = "32vh"
+
 stage = st.columns([3, 2])
 with stage[0]:
-    st.markdown(ds.cp_html(cur_speaker, cur_text), unsafe_allow_html=True)
+    st.markdown(ds.cp_html(cur_speaker, cur_text, height=STAGE_HEIGHT), unsafe_allow_html=True)
 with stage[1]:
+    # 상황실 제목이 차지하는 만큼 빼야 전투지휘소 카드와 아래끝이 맞는다.
     st.markdown(
         f'<div style="font-size:0.72rem; font-weight:700; letter-spacing:1px; '
-        f'color:{th.COLORS["accent_bright"]}; margin-bottom:7px;">상황실</div>'
-        + ds.rooms_grid_html(cur_speaker, cur_text),
+        f'color:{th.COLORS["accent_bright"]}; margin:0 0 7px;">상황실</div>'
+        + ds.rooms_grid_html(
+            cur_speaker, cur_text, height=f"calc({STAGE_HEIGHT} - 25px)"
+        ),
         unsafe_allow_html=True,
     )
 
-st.write("")
 st.markdown(
     ds.subtitle_html(cur_speaker, cur_text, st.session_state.stage_voice),
     unsafe_allow_html=True,

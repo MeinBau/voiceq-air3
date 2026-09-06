@@ -107,8 +107,14 @@ def _seat_row(titles: list[str], speaker: str | None, text: str | None) -> str:
     )
 
 
-def cp_html(speaker: str | None = None, text: str | None = None) -> str:
-    """전투지휘소. 좌측 비디오 패널 + 상석 + 회의 테이블 위/아래 좌석 줄."""
+def cp_html(
+    speaker: str | None = None, text: str | None = None, height: str = "auto"
+) -> str:
+    """전투지휘소. 좌측 비디오 패널 + 상석 + 회의 테이블 위/아래 좌석 줄.
+
+    height를 주면 그 높이를 채우도록 좌석 줄과 테이블이 세로로 벌어진다. 발표 화면을
+    한 화면에 꽉 채우기 위한 것이다.
+    """
     room = dr.cp_room()
     people = dr.occupants(room["id"])
     head = [t for t in dr.load().get("head_seats", []) if t in people]
@@ -128,7 +134,7 @@ def cp_html(speaker: str | None = None, text: str | None = None) -> str:
     table = (
         '<div style="border:1px solid rgba(213,221,232,0.3); border-radius:9px; '
         "background:linear-gradient(180deg, rgba(62,142,208,0.16), rgba(11,39,64,0.35)); "
-        'height:46px; display:flex; align-items:center; justify-content:center; '
+        'min-height:46px; flex:0 1 auto; display:flex; align-items:center; justify-content:center; '
         'font-size:0.6rem; letter-spacing:3px; color:rgba(255,255,255,0.45);">회의 테이블</div>'
     )
 
@@ -143,13 +149,15 @@ def cp_html(speaker: str | None = None, text: str | None = None) -> str:
     )
 
     return (
-        f'<div class="vc-card" style="padding:11px 13px; height:100%;">'
+        f'<div class="vc-card" style="padding:11px 13px; height:{height}; '
+        f'display:flex; flex-direction:column; box-sizing:border-box;">'
         f'<div style="font-size:0.72rem; font-weight:700; letter-spacing:1px; '
-        f'color:{th.COLORS["accent_bright"]}; margin-bottom:9px;">{_esc(room["name"])}</div>'
-        '<div style="display:flex; gap:10px; align-items:stretch;">'
+        f'color:{th.COLORS["accent_bright"]}; margin-bottom:9px; flex:none;">'
+        f'{_esc(room["name"])}</div>'
+        '<div style="flex:1; min-height:0; display:flex; gap:10px; align-items:stretch;">'
         + video_panel
-        + '<div style="flex:1; display:flex; flex-direction:column; gap:9px; '
-        'padding-top:26px;">'
+        + '<div style="flex:1; display:flex; flex-direction:column; '
+        'justify-content:space-around; padding-top:22px;">'
         + _seat_row(top, speaker, text)
         + table
         + _seat_row(bottom, speaker, text)
@@ -184,7 +192,8 @@ def room_card_html(room: dict, speaker: str | None = None, text: str | None = No
         )
 
     return (
-        f'<div class="{cls}" style="padding:9px 10px; min-height:96px;">'
+        f'<div class="{cls}" style="padding:9px 10px; min-height:96px; overflow:auto; '
+        f'display:flex; flex-direction:column; justify-content:center;">'
         + f'<div style="font-size:0.66rem; font-weight:700; '
         f'color:{th.COLORS["accent_bright"] if active else "rgba(255,255,255,0.86)"}; '
         f'margin-bottom:5px;">{_esc(room["name"])}</div>'
@@ -194,12 +203,15 @@ def room_card_html(room: dict, speaker: str | None = None, text: str | None = No
     )
 
 
-def rooms_grid_html(speaker: str | None = None, text: str | None = None) -> str:
-    """상황실 4개를 2×2로."""
+def rooms_grid_html(
+    speaker: str | None = None, text: str | None = None, height: str = "auto"
+) -> str:
+    """상황실 4개를 2×2로. height를 주면 네 칸이 그 높이를 고르게 나눠 갖는다."""
     cards = "".join(room_card_html(r, speaker, text) for r in dr.situation_rooms())
     return (
         '<div style="display:grid; grid-template-columns:repeat(2, 1fr); '
-        'gap:8px; height:100%;">' + cards + "</div>"
+        f'grid-template-rows:repeat(2, 1fr); gap:8px; height:{height}; '
+        'box-sizing:border-box;">' + cards + "</div>"
     )
 
 
