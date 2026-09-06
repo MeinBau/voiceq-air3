@@ -364,45 +364,9 @@ tab_wall, tab_book, tab_log, tab_memory, tab_map_ops = st.tabs(
 )
 
 with tab_wall:
-    if st.session_state.situation_type:
-        cols = st.columns([2, 4])
-        cols[0].metric("판정된 상황 유형", st.session_state.situation_type)
-        if st.session_state.situation_reason:
-            cols[1].caption(f"판단 근거: {st.session_state.situation_reason}")
-        if st.session_state.situation_unmatched:
-            st.warning(
-                f"모델이 낸 유형 '{st.session_state.situation_unmatched}' 은 플레이북에 없어 "
-                "'기타 상황'으로 처리했습니다. 필요하면 플레이북 탭에서 추가하세요."
-            )
-        # 화면을 누가 구성했는지 밝힌다. 모델 배치를 켜 놓고도 조용히 플레이북으로
-        # 되돌아가 있으면, 시연 중에 "모델이 배치한다"고 설명하는 것과 실제가 어긋난다.
-        if st.session_state.layout_origin:
-            if st.session_state.layout_origin == "모델":
-                cols[0].caption("화면 구성: 모델이 직접 결정")
-            elif st.session_state.get("llm_layout"):
-                st.warning(
-                    "모델이 낸 화면 목록에 쓸 수 있는 화면이 부족해 플레이북 배치로 "
-                    "되돌렸습니다. 배치를 학습하지 않은 모델이면 사이드바의 "
-                    "'화면 구성을 모델이 직접'을 꺼 주십시오."
-                )
-        if st.session_state.invented_sources:
-            st.caption(
-                "모델이 지어내 버린 화면: "
-                + ", ".join(st.session_state.invented_sources[:6])
-            )
-
     lr.render_cop_wall(
         st.session_state.cop_layout, st.session_state.situation_board, st.session_state.map_markers
     )
-    st.caption(
-        "1번 '비행단 전장상황도'는 항상 고정 표시됩니다. 지도 위 점은 지금 화면에 떠 있는 "
-        "CCTV의 위치이며, 숫자는 해당 화면의 순번과 같습니다. 무인기·차량 등 발언에서 "
-        "언급된 위치는 이모지 아이콘으로 같은 지도에 함께 표시되며, '전장상황도 조작' "
-        "탭에서 위치를 미세 조정할 수 있습니다."
-    )
-
-    if st.session_state.dropped_sources:
-        st.warning("해석하지 못한 플레이북 슬롯: " + ", ".join(st.session_state.dropped_sources))
 
 with tab_book:
     st.subheader("COP 플레이북")
