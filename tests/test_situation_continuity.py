@@ -87,6 +87,26 @@ print(f"[4] 두 상황 동시 표출 -> {len(both)}패널, 양쪽 고유 화면 
 assert len(both) <= pb.panel_budget(), f"패널이 {len(both)}개로 예산({pb.panel_budget()})을 넘었다"
 print(f"[5] 패널 수 {len(both)} <= 예산 {pb.panel_budget()} (통과)")
 
+# 시연 벽면은 5칸까지만 보여준다. 사태가 둘이면 고정 2개를 뺀 세 칸을 나눠 가지므로
+# 사태당 한두 칸뿐이고, 슬롯 순서가 곧 "무대에 남을 화면"이 된다.
+demo_ids = both[: pb.DEMO_MAX_PANELS]
+
+# ① 각 사태의 1순위 화면은 반드시 남는다 — 안 남으면 그 사태가 무대에서 통째로 사라진다.
+for situation in ("미상인원 기지침투", "드론상황"):
+    top_slot = pb.find_situation(situation)["screens"][0]
+    top_ids = {s["id"] for s in pb.resolve_slot(top_slot, INTRUSION_UTTERANCE)}
+    assert top_ids & set(demo_ids), (
+        f"'{situation}'의 1순위 화면({top_slot})이 시연 벽면 "
+        f"{pb.DEMO_MAX_PANELS}칸에 없다: {demo_ids}"
+    )
+
+# ② SSR은 드론상황이 살아 있는 한 계속 떠 있어야 한다(운용 요구). 슬롯 순서를 뒤로
+# 미는 순간 두 번째 사태가 오면 벽면에서 사라진다 — 실제로 그렇게 없어진 적이 있다.
+assert "RDR-SSR" in demo_ids, (
+    f"드론상황이 진행 중인데 SSR이 시연 벽면 {pb.DEMO_MAX_PANELS}칸에 없다: {demo_ids}"
+)
+print(f"[5-1] 시연 벽면 {pb.DEMO_MAX_PANELS}칸 — 두 사태의 1순위 화면 + SSR 유지 (통과)")
+
 # ---- ③ 세 번째 사태가 오면 가장 오래된 것이 밀려나는가 ----
 cm.apply_fast_result(fast("화생방 오염 상황"), "북측에서 화생방 오염이 탐지되었습니다.")
 assert fake_st.session_state.active_situations == ["화생방 오염 상황", "미상인원 기지침투"], \

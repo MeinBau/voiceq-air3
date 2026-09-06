@@ -510,11 +510,10 @@ cur_speaker = st.session_state.stage_speaker or None
 cur_text = st.session_state.stage_text or None
 
 latencies = st.session_state.display_latency_history
-# 8칸 벽면에 5패널이면 1순위(전장상황도)가 2×2를 받는다 — 지도를 크게 보여주려면
-# 이 수를 넘기면 안 된다(6패널이면 4+5>8이라 2×2가 안 나와 지도가 납작해진다).
+# 벽면에 올릴 패널 수 — 값과 그 이유는 playbook.DEMO_MAX_PANELS에 있다.
 # 사태가 둘이어도 build_layout_multi가 상황마다 화면을 하나씩 번갈아 넣으므로,
 # 고정 2개(전장상황도·작전상황판) 뒤 세 칸 안에 두 사태가 모두 들어온다.
-WALL_PANEL_CAP = 5
+WALL_PANEL_CAP = pb.DEMO_MAX_PANELS
 
 wall_layout = pb.retile(st.session_state.cop_layout[:WALL_PANEL_CAP], WALL_COLS)
 
