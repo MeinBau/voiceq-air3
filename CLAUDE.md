@@ -86,8 +86,9 @@
 
 ```
 voice-cue/
-├── app.py                       # Streamlit 엔트리포인트(운용): 접근 통제, 발언 입력, 5개 탭 UI
-├── demo.py                      # Streamlit 엔트리포인트(발표): 한 화면짜리 시연 무대
+├── app.py                       # 엔트리포인트: 접근 통제 + st.navigation으로 두 화면 전환
+├── operate.py                   # 운용 화면(페이지): 발언 입력, 5개 탭 UI
+├── demo.py                      # 시연 화면(페이지): 발표용 한 화면 무대. 단독 실행도 됨
 ├── requirements.txt
 ├── .streamlit/
 │   ├── config.toml              # 다크 테마
@@ -104,6 +105,7 @@ voice-cue/
 │   ├── map_renderer.py          # base_map + sources를 위성사진 느낌 SVG로 렌더링, 클릭용 이미지 생성
 │   ├── map_icons.py             # 키워드 기반 자동 아이콘 프리셋(무인기/차량/침투 등) 관리
 │   ├── layout_renderer.py       # COP 레이아웃/상황판/작전상황일지를 Streamlit HTML로 렌더링
+│   ├── access.py                # 외부 공개 시 암호 관문 (두 화면이 함께 쓴다)
 │   ├── demo_theme.py            # 시연 페이지 색·폰트 토큰 (발표 자료 덱에서 추출)
 │   ├── demo_rooms.py            # 시연 페이지 방 배치 — 화자를 전투지휘소/상황실에 배정
 │   ├── demo_stage.py            # 전투지휘소 평면도(SVG)·상황실 카드·상태바·자막 렌더링
@@ -283,8 +285,11 @@ voice-cue/
   - 필요 시 `LOCAL_BASE_URL`(로컬 서버 전환용)
   - `LLM_PROVIDER`를 명시하지 않으면 secrets에 실제로 들어있는 키를 보고 자동 선택
     (`configured_provider()`)
-- **외부(터널)로 공개할 경우 `APP_PASSWORD`를 반드시 설정** — 설정 안 하면 외부 접속
-  자체가 차단됨 (fail-closed). 로컬 접속(`localhost`)은 영향 없음
+- **외부(터널·스트림릿 클라우드)로 공개할 경우 `APP_PASSWORD`를 반드시 설정** — 설정 안
+  하면 외부 접속 자체가 차단됨 (fail-closed). 로컬 접속(`localhost`)은 영향 없음.
+  운용 화면과 시연 화면 모두 같은 관문(`modules/access.py`)을 지난다
+- 스트림릿 클라우드는 앱 하나당 메인 파일이 하나뿐이다. `app.py`를 메인 파일로 두면
+  사이드바 전환으로 두 화면을 다 볼 수 있어 배포와 Secrets가 한 벌로 끝난다
 - `.streamlit/secrets.toml`은 `.gitignore`에 포함되어 있음 (커밋 금지 확인 완료)
 - `data/context_memory.json`, `data/operation_log.json`도 `.gitignore` 처리됨 — 런타임
   생성 파일이므로 커밋 대상 아님
@@ -338,6 +343,7 @@ voice-cue/
   출력하게 하는 것)은 하지 말 것
 - UI는 다크 테마 + 그리드 배치로 "Video Wall" 느낌을 내되, 과도한 커스텀 CSS보다는
   Streamlit 기본 컴포넌트 조합으로 안정성 우선
-- 코드 변경 시마다 `streamlit run app.py`로 로컬 확인 후 커밋
+- 코드 변경 시마다 `streamlit run app.py`로 로컬 확인 후 커밋 — 사이드바 맨 위에서
+  운용/시연 화면을 전환한다. 시연 화면만 띄우려면 `streamlit run demo.py`
 - 모델/공급자 기본값을 바꿀 때는 `llm_engine.py`의 실측 코멘트(응답속도·JSON 안정성)를
   갱신할 것 — 심사에서 "거대 모델로 시연하고 온프레미스에서 된다고 주장" 하면 반박당함
