@@ -219,14 +219,74 @@ def apply_full_result(
 ) -> None:
     """기록 경로 결과 — 누적 요약, 상황판, 작전상황일지, 전장상황도 아이콘을 갱신한다."""
     st.session_state.context_memory_summary = result_data.get("context_memory", "")
-    st.session_state.situation_board = sorted(
-        result_data.get("situation_board", []), key=lambda x: x.get("rank", 99)
-    )
 
     event_id = _merge_operation_log_entry(
         result_data.get("operation_log_entry") or {}, speaker, timestamp
     )
+    # 무엇이 사태인지는 일지가 정하고, 얼마나 급한지만 모델 판단을 쓴다.
+    _apply_urgency(event_id, result_data.get("situation_board") or [])
+    _rebuild_situation_board()
     _auto_place_markers(event_id or "", utterance)
+
+
+# 상황판에 한 번에 올릴 사태 수. 프롬프트가 모델에 요구하는 상한과 같다.
+MAX_BOARD_ROWS = 5
+VALID_URGENCY = ("긴급", "주의", "관찰")
+_URGENCY_RANK = {name: i for i, name in enumerate(VALID_URGENCY)}
+DEFAULT_URGENCY = "주의"
+
+
+def _apply_urgency(event_id: str | None, model_board: list) -> None:
+    """모델이 이번 턴에 매긴 최상위 긴급도를 방금 건드린 사태에 붙인다.
+
+    모델의 상황판은 "이번 발언"에 대한 것이라 그대로 쓰면 판이 매 턴 갈아엎히지만,
+    긴급도만 떼어 오면 "인근 주민으로 확인" 같은 발언에서 사태가 긴급→관찰로 내려가는
+    변화를 살릴 수 있다.
+    """
+    if not event_id or not model_board:
+        return
+    top = model_board[0] if isinstance(model_board[0], dict) else {}
+    urgency = str(top.get("urgency", "") or "").strip()
+    if urgency not in VALID_URGENCY:
+        return
+    for event in st.session_state.operation_log:
+        if event.get("event_id") == event_id:
+            event["urgency"] = urgency
+            return
+
+
+def _rebuild_situation_board() -> None:
+    """작전상황판을 작전상황일지에서 다시 만든다.
+
+    상황판은 "지금 진행 중인 사태"를 걸어 두는 판이다. 모델이 발언마다 낸 목록으로
+    통째로 갈아치우면 방금 한 말을 되풀이하는 칸이 되고, 실제로 "작전상황판은 우측에
+    유지하십시오" 같은 화면 조작 지시까지 긴급 사태로 올라왔다.
+
+    일지는 이미 사태 단위로 묶여 있고(_merge_operation_log_entry) 조치는 사태 안에
+    들어가므로, 여기서 파생시키면 판에는 사태만 남는다. 긴급도 높은 순, 같으면 최근에
+    생긴 순이다.
+    """
+    log = st.session_state.operation_log
+    ordered = sorted(
+        enumerate(log),
+        key=lambda pair: (
+            _URGENCY_RANK.get(pair[1].get("urgency", DEFAULT_URGENCY), 1),
+            -pair[0],
+        ),
+    )
+    board = []
+    for rank, (_, event) in enumerate(ordered[:MAX_BOARD_ROWS], start=1):
+        entries = event.get("entries") or []
+        board.append(
+            {
+                "rank": rank,
+                "event": event.get("title", ""),
+                "urgency": event.get("urgency", DEFAULT_URGENCY),
+                # 사태의 가장 최근 진행 상황. 판을 보면 지금 어디까지 왔는지 읽힌다.
+                "latest": entries[-1].get("detail", "") if len(entries) > 1 else "",
+            }
+        )
+    st.session_state.situation_board = board
 
 
 _EVENT_ID_RE = re.compile(r"^(?:사태|사건|상황|이벤트|event)\s*[-_]?\s*(\d+)$", re.IGNORECASE)

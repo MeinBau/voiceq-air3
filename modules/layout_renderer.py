@@ -46,7 +46,13 @@ def _situation_board_body(situation_board: list[dict]) -> str:
             f'<span style="padding:1px 6px; border-radius:8px; background:{color}; '
             f'margin-left:4px;">{_esc(urgency)}</span></div>'
             f'<div style="font-size:0.74rem; font-weight:700; margin-top:2px;">{event}</div>'
-            "</div>"
+            + (
+                f'<div style="font-size:0.62rem; opacity:0.6; margin-top:2px;">'
+                f"└ {_esc(item['latest'])}</div>"
+                if item.get("latest")
+                else ""
+            )
+            + "</div>"
         )
 
     return (
@@ -63,6 +69,7 @@ def render_cop_wall(
     rows: int = pb.GRID_ROWS,
     show_title: bool = True,
     row_track: str = "minmax(150px, auto)",
+    empty_note: str = "아직 화면 구성이 결정되지 않았습니다. 발언을 입력하면 자동으로 배치됩니다.",
 ) -> None:
     """Video Wall 그리드. 1순위는 좌측 대형 화면을 차지한다.
 
@@ -81,7 +88,17 @@ def render_cop_wall(
         st.subheader(f"COP 화면 구성 — Video Wall {rows}×{cols}")
 
     if not cop_layout:
-        st.info("아직 화면 구성이 결정되지 않았습니다. 발언을 입력하면 자동으로 배치됩니다.")
+        # 발표 화면은 안내 문구 대신 꺼진 벽면을 보여준다 — 관객에게 하는 말이 아니라
+        # 운용자에게 하는 말이라, 영상에 들어가면 어색하다.
+        if empty_note:
+            st.info(empty_note)
+        else:
+            st.markdown(
+                f'<div style="height:calc({row_track} * {rows} + 28px); '
+                f'background:#05080B; border-radius:8px; '
+                f'border:1px solid rgba(255,255,255,0.08);"></div>',
+                unsafe_allow_html=True,
+            )
         return
 
     panels = []

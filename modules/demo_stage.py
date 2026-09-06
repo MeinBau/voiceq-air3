@@ -258,9 +258,18 @@ _SUBTITLE_GAP = "22px"
 
 
 def header_html(
-    situation: str = "", latency: float | None = None, panels: int = 0, clock: str = ""
+    situation: str = "",
+    latency: float | None = None,
+    panels: int = 0,
+    clock: str = "",
+    processing: bool = False,
 ) -> str:
-    """상단 상태 바 — 체계명, 현재 상황 유형, 표출 지연, 표출 화면 수, 시각."""
+    """상단 상태 바 — 체계명, 현재 상황 유형, 표출 지연, 표출 화면 수, 시각.
+
+    processing은 "발언은 끝났고 판단이 아직 안 나온" 박자에 켠다. 연속 재생에서
+    말하기와 화면 전환 사이에 이 표시가 들어가야, 화면이 저절로 바뀌는 게 아니라
+    발언을 처리한 결과라는 인과가 보인다.
+    """
 
     def chip(label: str, value: str, color: str) -> str:
         return (
@@ -283,7 +292,9 @@ def header_html(
     )
 
     chips = [chip("SCREENS", str(panels), "rgba(233,240,250,0.92)")]
-    if latency is not None:
+    if processing:
+        chips.append(chip("STATUS", "분석 중", C["warn"]))
+    elif latency is not None:
         chips.append(chip("DISPLAY LATENCY", f"{latency:.1f}s", C["accent_bright"]))
     if clock:
         chips.append(chip("TIME", clock, "rgba(233,240,250,0.92)"))
@@ -300,6 +311,25 @@ def header_html(
         + '<div style="margin-left:auto; display:flex; gap:22px; align-items:center;">'
         + "".join(chips)
         + "</div></div>"
+    )
+
+
+def interlude_html(name: str, index: int, total: int, height: str = "auto") -> str:
+    """시나리오와 시나리오 사이의 타이틀 카드.
+
+    앞 상황을 지우고 다음 상황으로 넘어가는 순간을 관객이 알아채야, 두 시나리오가
+    한 편으로 이어져 보인다. 이 카드가 없으면 화면이 갑자기 리셋된 것처럼 보인다.
+    """
+    return (
+        f'<div class="vc-card" style="height:{height}; display:flex; '
+        'flex-direction:column; align-items:center; justify-content:center; gap:10px; '
+        'box-sizing:border-box;">'
+        f'<div style="font-size:0.6rem; letter-spacing:3px; color:{C["muted"]};">'
+        f"SCENARIO {index} / {total}</div>"
+        f'<div style="font-size:1.5rem; font-weight:800; letter-spacing:1px; '
+        f'color:{C["accent_bright"]};">{_esc(name)}</div>'
+        f'<div style="width:64px; height:2px; background:{C["accent"]};"></div>'
+        "</div>"
     )
 
 

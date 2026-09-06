@@ -53,6 +53,14 @@ st.session_state.setdefault("play_index", 0)
 # 지금 재생 중인 시나리오와, 방금 재생한 턴의 녹음 파일 경로.
 st.session_state.setdefault("scenario_id", dsc.SCENARIO_IDS[0])
 st.session_state.setdefault("stage_audio", "")
+# 연속 재생(영상 모드) 상태. film_phase는 "다음에 할 일"이고, film_hold는 지금 화면을
+# 몇 초 보여준 뒤 그 일을 할지다. 한 발언을 speak(말한다) / apply(판단을 화면에 올린다)
+# 두 박자로 쪼개야 "발언 -> 처리 -> 표출"의 인과가 보인다.
+st.session_state.setdefault("film_playlist", [])
+st.session_state.setdefault("film_pos", 0)
+st.session_state.setdefault("film_phase", "speak")
+st.session_state.setdefault("film_hold", 0.0)
+st.session_state.setdefault("film_card", "")
 
 SPEAKERS = org.speaker_titles()
 
@@ -140,6 +148,50 @@ def run_turn(speaker: str, utterance: str, via_voice: bool = False) -> dict | No
     }
 
 
+SITUATION_KEYS = (
+    "cop_layout", "situation_board", "operation_log", "utterance_log", "map_markers",
+    "active_situations", "situation_type", "situation_reason", "situation_unmatched",
+    "context_memory_summary", "display_latency_history", "layout_origin",
+    "invented_sources", "dropped_sources",
+)
+
+
+def reset_situation() -> None:
+    """상황 관련 상태만 비운다. 시나리오가 바뀔 때 앞 사태가 남아 있으면 안 된다."""
+    for key in SITUATION_KEYS:
+        st.session_state.pop(key, None)
+    cm.init_session_state()
+    st.session_state.stage_speaker = ""
+    st.session_state.stage_text = ""
+    st.session_state.stage_audio = ""
+
+
+def speak_turn(scenario_id: str, index: int) -> None:
+    """말하는 박자 — 자막과 녹음만 올리고 화면 구성은 건드리지 않는다."""
+    turn = dsc.script(scenario_id)[index]
+    st.session_state.stage_speaker = turn["speaker"]
+    st.session_state.stage_text = turn["utterance"]
+    st.session_state.stage_voice = False
+    audio = dsc.audio_path(scenario_id, index)
+    st.session_state.stage_audio = str(audio) if audio else ""
+
+
+def apply_verdict(scenario_id: str, index: int, use_baked: bool) -> None:
+    """판단을 화면에 올리는 박자 — 여기서 벽면이 바뀐다."""
+    turn = dsc.script(scenario_id)[index]
+    if use_baked:
+        baked_turn = (dsc.load_baked(scenario_id) or {})["turns"][index]
+        apply_turn(
+            baked_turn["speaker"],
+            baked_turn["utterance"],
+            baked_turn.get("fast"),
+            baked_turn.get("full"),
+            baked_turn.get("display_latency"),
+        )
+    else:
+        run_turn(turn["speaker"], turn["utterance"])
+
+
 def play_scripted_turn(scenario_id: str, index: int, use_baked: bool) -> None:
     """대본의 한 줄을 재생한다. 구운 결과가 있으면 LLM을 부르지 않는다.
 
@@ -160,6 +212,63 @@ def play_scripted_turn(scenario_id: str, index: int, use_baked: bool) -> None:
 
     audio = dsc.audio_path(scenario_id, index)
     st.session_state.stage_audio = str(audio) if audio else ""
+
+
+# 각 박자를 화면에 몇 초 두는지. 발표 영상으로 보려면 관객이 자막을 읽고, 화면이
+# 바뀌는 것을 보고, 무엇이 떴는지 확인할 시간이 각각 필요하다.
+BEAT_SECONDS = {
+    "card": 2.6,      # 시나리오 타이틀 카드
+    "speak": 3.4,     # 자막 + 녹음 재생
+    "apply": 2.8,     # 바뀐 벽면 감상
+    "ending": 4.2,    # 시나리오 마지막 화면은 조금 더 길게
+}
+
+
+def start_film(playlist: list[str]) -> None:
+    """연속 재생 시작. 첫 박자는 타이틀 카드다."""
+    st.session_state.film_playlist = playlist
+    st.session_state.film_pos = 0
+    st.session_state.film_phase = "card"
+    st.session_state.film_hold = 0.0
+    st.session_state.stage_auto = True
+
+
+def advance_film() -> None:
+    """박자 하나를 진행한다. 화면은 이미 그려진 뒤이므로 여기서 상태만 바꾼다."""
+    ss = st.session_state
+    playlist = ss.film_playlist or [ss.scenario_id]
+    scenario_id = playlist[min(ss.film_pos, len(playlist) - 1)]
+    turns = dsc.script(scenario_id)
+    use_baked = ss.get("stage_use_baked", False)
+
+    if ss.film_phase == "card":
+        ss.scenario_id = scenario_id
+        reset_situation()
+        ss.play_index = 0
+        ss.film_card = dsc.name_of(scenario_id)
+        ss.film_phase = "speak"
+        ss.film_hold = BEAT_SECONDS["card"]
+        return
+
+    if ss.film_phase == "speak":
+        ss.film_card = ""
+        speak_turn(scenario_id, ss.play_index)
+        ss.film_phase = "apply"
+        ss.film_hold = BEAT_SECONDS["speak"]
+        return
+
+    # "apply" — 여기서 벽면이 바뀐다
+    apply_verdict(scenario_id, ss.play_index, use_baked)
+    ss.play_index += 1
+    if ss.play_index < len(turns):
+        ss.film_phase = "speak"
+        ss.film_hold = BEAT_SECONDS["apply"]
+    elif ss.film_pos + 1 < len(playlist):
+        ss.film_pos += 1
+        ss.film_phase = "card"
+        ss.film_hold = BEAT_SECONDS["ending"]
+    else:
+        ss.stage_auto = False
 
 
 # ---------- 조작 (발표 중에는 접어 둔다) ----------
@@ -235,21 +344,39 @@ with st.sidebar:
 
     # 자동 재생은 화면 맨 아래에서 처리한다 — 이번 발언이 그려진 뒤에 쉬어야 관객이
     # 화면 변화를 볼 수 있기 때문이다.
-    # key를 주지 않는다. key가 붙은 상태는 그 위젯이 만들어진 뒤로는 못 바꾸는데
-    # (StreamlitWidgetAlreadyInstantiatedError), 재생이 끝났을 때와 굽기를 시작할 때
-    # 코드가 자동 재생을 꺼야 하기 때문이다. 대신 value로 넣고 결과를 되돌려 저장한다.
-    auto = st.toggle(
-        "자동 재생", value=st.session_state.get("stage_auto", False), disabled=done
-    )
-    st.session_state.stage_auto = auto and not done
-    # 슬라이더가 아니라 선택형이다. Streamlit 슬라이더의 채워진 트랙은 primaryColor를
-    # 인라인 그라데이션으로 구워 넣어 이 페이지 팔레트로 못 바꾸고(값마다 달라진다),
-    # 발표 중에는 드래그보다 클릭 한 번이 빠르다.
-    st.selectbox(
-        "발언 간격(초)", [1.0, 1.5, 2.0, 3.0, 5.0], index=2, key="stage_pause"
-    )
-    if st.session_state.get("stage_auto"):
-        st.caption("자동 재생 중에는 간격만큼 화면이 멈춰 있어 조작이 늦게 먹습니다.")
+    st.divider()
+    st.caption("연속 재생 — 발표 영상용")
+
+    # 굽기가 있는 시나리오만 이어 붙인다. 실시간 호출은 중간에 느려지거나 실패하면
+    # 영상이 거기서 끊긴다.
+    film_ids = [c["id"] for c in catalog if c["has_bake"]]
+    running = bool(st.session_state.get("stage_auto"))
+
+    if st.button(
+        "■ 정지" if running else f"▶ 전체 연속 재생 ({len(film_ids)}개 시나리오)",
+        type="primary",
+        use_container_width=True,
+        disabled=not film_ids,
+    ):
+        if running:
+            st.session_state.stage_auto = False
+        else:
+            st.session_state.stage_use_baked = True
+            start_film(film_ids)
+        st.rerun()
+
+    if st.button("▶ 이 시나리오만 연속 재생", use_container_width=True,
+                 disabled=running or not can_replay):
+        st.session_state.stage_use_baked = True
+        start_film([scenario_id])
+        st.rerun()
+
+    if not film_ids:
+        st.caption("구운 시나리오가 없어 연속 재생을 쓸 수 없습니다.")
+    elif running:
+        pos = st.session_state.film_pos + 1
+        st.caption(f"재생 중 — {pos}/{len(st.session_state.film_playlist)}번째 시나리오. "
+                   "박자마다 화면이 멈춰 있어 조작이 늦게 먹습니다.")
 
     audio_file = st.session_state.get("stage_audio") or ""
     if audio_file and Path(audio_file).exists():
@@ -317,12 +444,16 @@ WALL_PANEL_CAP = 5
 
 wall_layout = pb.retile(st.session_state.cop_layout[:WALL_PANEL_CAP], WALL_COLS)
 
+# "발언은 나왔고 판단은 아직" 박자 — 다음에 할 일이 apply면 지금 화면이 그 상태다.
+processing = bool(st.session_state.get("stage_auto")) and st.session_state.film_phase == "apply"
+
 st.markdown(
     ds.header_html(
         situation=st.session_state.situation_type,
         latency=latencies[-1] if latencies else None,
         panels=len(wall_layout),
         clock=time.strftime("%H:%M:%S"),
+        processing=processing,
     ),
     unsafe_allow_html=True,
 )
@@ -338,6 +469,8 @@ lr.render_cop_wall(
     # 한 화면(100vh)에 꽉 채우기 위한 세로 배분. 패널 자체의 min-height:150px보다
     # 작아지지 않게 max()로 묶는다.
     row_track="max(150px, 22vh)",
+    # 발표 화면이므로 운용자용 안내 문구는 띄우지 않는다.
+    empty_note="",
 )
 
 STAGE_HEIGHT = "31vh"
@@ -345,35 +478,40 @@ STAGE_HEIGHT = "31vh"
 # 두 칸 모두 같은 높이의 구역 제목을 달아야 카드 위끝·아래끝이 나란히 맞는다.
 BODY_HEIGHT = f"calc({STAGE_HEIGHT} - 21px)"
 
-stage = st.columns([3, 2])
-with stage[0]:
+film_card = st.session_state.get("film_card") or ""
+if film_card:
+    playlist = st.session_state.film_playlist or [st.session_state.scenario_id]
     st.markdown(
-        ds.section_label("전투지휘소", f"{len(dr.occupants(dr.cp_room()['id']))}명 착석")
-        + ds.cp_html(cur_speaker, height=BODY_HEIGHT),
+        ds.interlude_html(
+            film_card, st.session_state.film_pos + 1, len(playlist), height=STAGE_HEIGHT
+        ),
         unsafe_allow_html=True,
     )
-with stage[1]:
-    st.markdown(
-        ds.section_label("상황실", f"{len(dr.situation_rooms())}개소")
-        + ds.rooms_grid_html(cur_speaker, height=BODY_HEIGHT),
-        unsafe_allow_html=True,
-    )
+else:
+    stage = st.columns([3, 2])
+    with stage[0]:
+        st.markdown(
+            ds.section_label("전투지휘소", f"{len(dr.occupants(dr.cp_room()['id']))}명 착석")
+            + ds.cp_html(cur_speaker, height=BODY_HEIGHT),
+            unsafe_allow_html=True,
+        )
+    with stage[1]:
+        st.markdown(
+            ds.section_label("상황실", f"{len(dr.situation_rooms())}개소")
+            + ds.rooms_grid_html(cur_speaker, height=BODY_HEIGHT),
+            unsafe_allow_html=True,
+        )
 
 st.markdown(
     ds.subtitle_html(cur_speaker, cur_text, st.session_state.stage_voice),
     unsafe_allow_html=True,
 )
 
-# 자동 재생 — 이번 발언이 다 그려진 뒤에 쉬고, 다음 발언을 처리한 뒤 다시 그린다.
-# 이 순서여야 관객이 발언마다 화면이 바뀌는 것을 볼 수 있다. 위쪽(사이드바)에서
-# 처리하면 아직 그리지도 않은 화면을 두고 쉬게 된다.
+# 연속 재생 — 지금 화면을 film_hold 만큼 보여준 뒤 다음 박자를 진행한다.
+# 반드시 화면을 다 그린 뒤(스크립트 맨 아래)여야 한다. 위쪽에서 처리하면 아직 그리지도
+# 않은 화면을 두고 기다리게 되어, 관객에게는 자막과 화면 전환이 동시에 일어난 것처럼
+# 보인다 — 그러면 "발언 때문에 화면이 바뀌었다"는 인과가 사라진다.
 if st.session_state.get("stage_auto"):
-    scenario_id = st.session_state.scenario_id
-    if st.session_state.play_index < len(dsc.script(scenario_id)):
-        time.sleep(st.session_state.get("stage_pause", 2.0))
-        next_index = st.session_state.play_index
-        play_scripted_turn(
-            scenario_id, next_index, st.session_state.get("stage_use_baked", False)
-        )
-        st.session_state.play_index = next_index + 1
-        st.rerun()
+    time.sleep(st.session_state.film_hold)
+    advance_film()
+    st.rerun()
