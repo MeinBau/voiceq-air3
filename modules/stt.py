@@ -28,7 +28,12 @@ def transcribe(audio_bytes: bytes, filename: str = "utterance.wav") -> str:
             "음성 입력은 OpenRouter 키와 별개로 OpenAI Whisper API 키가 필요합니다."
         )
 
-    client = openai.OpenAI(api_key=api_key, timeout=60.0)
+    # base_url을 명시한다. 비워 두면 SDK가 환경변수 OPENAI_BASE_URL을 가져다 쓰는데,
+    # 이 프로젝트는 OpenRouter/Ollama 전환을 위해 그 변수를 쉘에 두는 경우가 있어
+    # Whisper 요청이 전사 API가 없는 호스트로 날아가 404가 났다.
+    client = openai.OpenAI(
+        api_key=api_key, base_url="https://api.openai.com/v1", timeout=60.0
+    )
     try:
         result = client.audio.transcriptions.create(
             model=WHISPER_MODEL,

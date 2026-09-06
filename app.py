@@ -198,6 +198,8 @@ with st.sidebar:
                     st.session_state.voice_transcript = stt.transcribe(audio_value.getvalue())
                 except RuntimeError as e:
                     st.error(str(e))
+                except Exception as e:  # noqa: BLE001 — SDK/전송 계층 예외를 트레이스백 대신 메시지로 보여준다.
+                    st.error(f"음성 변환 중 오류: {type(e).__name__}: {e}")
 
         if st.session_state.voice_transcript:
             # key를 지정하지 않는다. key가 있는 위젯은 한 번 그려진 뒤로 value= 인자를
