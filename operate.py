@@ -429,6 +429,25 @@ with tab_memory:
             st.success("저장했습니다. 다음 발언부터 이 내용을 기준으로 판단합니다.")
             st.rerun()
 
+    st.subheader("마지막 판단 원문 (LLM 응답 JSON)")
+    st.caption(
+        "발언 하나에 FAST(화면 구성용)·FULL(기록용) 두 번을 병렬로 호출하고, 응답은 "
+        "순수 JSON만 받습니다. 아래는 방금 반영된 응답 그대로입니다 — 화면·상황판·일지가 "
+        "이 JSON에서 나옵니다."
+    )
+    verdict = st.session_state.get("last_verdict") or {}
+    if verdict.get("utterance"):
+        st.caption(f"대상 발언: {verdict['utterance']}")
+        col_fast, col_full = st.columns(2)
+        with col_fast:
+            st.markdown("**FAST — 상황 유형 (화면 표출 경로)**")
+            st.json(verdict.get("fast") or {"(응답 없음)": ""}, expanded=True)
+        with col_full:
+            st.markdown("**FULL — 요약·상황판·일지 (기록 경로)**")
+            st.json(verdict.get("full") or {"(응답 없음)": ""}, expanded=True)
+    else:
+        st.caption("아직 판단된 발언이 없습니다.")
+
     st.subheader("발언 이력")
     if st.session_state.utterance_log:
         for turn in reversed(st.session_state.utterance_log):

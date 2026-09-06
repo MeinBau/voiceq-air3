@@ -41,6 +41,10 @@ def init_session_state() -> None:
         "layout_origin": "",
         "invented_sources": [],
         "voice_transcript": "",
+        # 방금 반영한 판단의 원문 JSON. 실시간이면 모델이 낸 응답 그대로,
+        # 프리베이크 재생이면 구워 둔 판단 그대로다. 화면에 보여 주기 위한 것 —
+        # 무엇을 보고 이 벽면이 나왔는지 사람이 눈으로 확인할 수 있어야 한다.
+        "last_verdict": {},
         "provider": engine.configured_provider(),
         "selected_model": engine.default_model_for(engine.configured_provider()),
         "model_options": [],
@@ -68,6 +72,15 @@ KEEP_SITUATION = pb.KEEP_SITUATION
 MIN_MODEL_PANELS = 3
 
 
+def _record_verdict(kind: str, result_data: dict, utterance: str) -> None:
+    """반영한 판단 원문을 남긴다. 발언이 바뀌면 앞 발언 것은 지운다."""
+    verdict = st.session_state.get("last_verdict") or {}
+    if verdict.get("utterance") != utterance:
+        verdict = {"utterance": utterance}
+    verdict[kind] = result_data
+    st.session_state.last_verdict = verdict
+
+
 def apply_fast_result(result_data: dict, utterance: str = "") -> None:
     """표출 경로 결과를 화면 구성으로 반영한다.
 
@@ -82,6 +95,8 @@ def apply_fast_result(result_data: dict, utterance: str = "") -> None:
     상황은 하나만 유지하지 않는다. 두 사태가 같이 진행 중일 때 최근에 판정된 하나로
     화면을 통째로 갈아치우면 나머지 사태가 지휘관 시야에서 사라지기 때문이다.
     """
+    _record_verdict("fast", result_data, utterance)
+
     situation = result_data.get("situation") or {}
     raw_type = str(situation.get("type", "") or "").strip()
     reason = str(situation.get("reason", "") or "")
@@ -218,6 +233,8 @@ def apply_full_result(
     result_data: dict, speaker: str = "", timestamp: str = "", utterance: str = ""
 ) -> None:
     """기록 경로 결과 — 누적 요약, 상황판, 작전상황일지, 전장상황도 아이콘을 갱신한다."""
+    _record_verdict("full", result_data, utterance)
+
     st.session_state.context_memory_summary = result_data.get("context_memory", "")
 
     event_id = _merge_operation_log_entry(
