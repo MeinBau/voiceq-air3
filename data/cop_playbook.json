@@ -66,6 +66,10 @@
    "type": "nearest_cctv",
    "max": 3
   },
+  "언급된 카메라": {
+   "type": "nearest_cctv",
+   "max": 1
+  },
   "낙탄 지역 cctv": {
    "type": "nearest_cctv",
    "max": 3
@@ -104,6 +108,7 @@
    ],
    "screens": [
     "TOD화면",
+    "언급된 카메라",
     "SSR화면",
     "C4I 비행스케쥴"
    ]

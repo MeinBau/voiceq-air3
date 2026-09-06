@@ -58,17 +58,19 @@ assert ids() == drone, f"지어낸 유형인데 화면이 바뀌었다: {ids()}"
 print("[3] 플레이북에 없는 유형 -> 화면 그대로 (통과)")
 
 # ---- ② 두 번째 사태가 생겨도 첫 번째가 화면에 남는가 ----
-cm.apply_fast_result(
-    fast("미상인원 기지침투"), "남측 취약지점에서 미상인원 침투가 확인되었습니다."
-)
+INTRUSION_UTTERANCE = "남측 취약지점에서 미상인원 침투가 확인되었습니다."
+cm.apply_fast_result(fast("미상인원 기지침투"), INTRUSION_UTTERANCE)
 both = ids()
 assert fake_st.session_state.active_situations == ["미상인원 기지침투", "드론상황"], \
     fake_st.session_state.active_situations
 
 from modules import playbook as pb  # noqa: E402
 
-drone_only, _ = pb.build_layout("드론상황", "북서방 상공에 무인기 2대 식별되었습니다.")
-intr_only, _ = pb.build_layout("미상인원 기지침투", "남측 취약지점에서 미상인원 침투가 확인되었습니다.")
+# 비교 기준은 반드시 both를 만든 그 발언으로 세운다. TOD·CCTV처럼 발언에서
+# 방위·시설을 읽어 고르는 슬롯은 발언이 다르면 다른 소스를 내놓으므로, 다른 발언으로
+# 세운 기준과 대조하면 "화면이 사라졌다"는 오판이 난다.
+drone_only, _ = pb.build_layout("드론상황", INTRUSION_UTTERANCE)
+intr_only, _ = pb.build_layout("미상인원 기지침투", INTRUSION_UTTERANCE)
 drone_ids = {x["source_id"] for x in drone_only}
 intr_ids = {x["source_id"] for x in intr_only}
 pinned = drone_ids & intr_ids          # 전장상황도처럼 양쪽 공통인 화면은 증거가 안 된다
