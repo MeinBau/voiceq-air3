@@ -54,13 +54,13 @@ st.session_state.setdefault("play_index", 0)
 st.session_state.setdefault("scenario_id", dsc.SCENARIO_IDS[0])
 st.session_state.setdefault("stage_audio", "")
 # 연속 재생(영상 모드) 상태. film_phase는 "다음에 할 일"이고, film_hold는 지금 화면을
-# 몇 초 보여준 뒤 그 일을 할지다. 한 발언을 speak(말한다) / apply(판단을 화면에 올린다)
-# 두 박자로 쪼개야 "발언 -> 처리 -> 표출"의 인과가 보인다.
+# 몇 초 보여준 뒤 그 일을 할지다. 한 발언을 voice(말한다) / caption(전사된 문장이
+# 자막에 오른다) / apply(판단이 화면에 뜬다) 세 박자로 쪼개야 "발언 -> 인식 -> 표출"의
+# 인과가 순서대로 보인다.
 st.session_state.setdefault("film_playlist", [])
 st.session_state.setdefault("film_pos", 0)
-st.session_state.setdefault("film_phase", "speak")
+st.session_state.setdefault("film_phase", "voice")
 st.session_state.setdefault("film_hold", 0.0)
-st.session_state.setdefault("film_card", "")
 # 굽기의 사태 ID -> 지금 일지의 실제 ID. 시나리오를 이어 붙일 때 쓴다.
 st.session_state.setdefault("film_event_map", {})
 
@@ -169,13 +169,24 @@ def reset_situation() -> None:
 
 
 def speak_turn(scenario_id: str, index: int) -> None:
-    """말하는 박자 — 자막과 녹음만 올리고 화면 구성은 건드리지 않는다."""
+    """말하는 박자 — 화자를 켜고 녹음을 튼다. 자막은 아직 올리지 않는다.
+
+    자막을 여기서 같이 띄우면 관객은 문장을 1초 만에 다 읽고 남은 6초 동안 목소리만
+    듣는다. 순서가 뒤집힌 것이기도 하다 — 실제 체계는 발언이 끝나야 전사한다.
+    """
     turn = dsc.script(scenario_id)[index]
     st.session_state.stage_speaker = turn["speaker"]
-    st.session_state.stage_text = turn["utterance"]
+    st.session_state.stage_text = ""
     st.session_state.stage_voice = False
     audio = dsc.audio_path(scenario_id, index)
     st.session_state.stage_audio = str(audio) if audio else ""
+
+
+def caption_turn(scenario_id: str, index: int) -> None:
+    """말이 끝난 박자 — 전사된 발언을 자막 바에 올린다. 화면 구성은 아직 그대로다."""
+    st.session_state.stage_text = dsc.script(scenario_id)[index]["utterance"]
+    # 녹음은 이미 다 흘렀다. 지워 두지 않으면 다시 그릴 때 처음부터 또 재생된다.
+    st.session_state.stage_audio = ""
 
 
 def _remap_event_id(full: dict | None, scenario_id: str) -> dict | None:
@@ -248,33 +259,36 @@ def play_scripted_turn(scenario_id: str, index: int, use_baked: bool) -> None:
     st.session_state.stage_audio = str(audio) if audio else ""
 
 
-# 각 박자를 화면에 몇 초 두는지. 발표 영상으로 보려면 관객이 자막을 읽고, 화면이
-# 바뀌는 것을 보고, 무엇이 떴는지 확인할 시간이 각각 필요하다.
+# 각 박자를 화면에 몇 초 두는지. 한 발언은 세 박자로 간다 —
+#   voice   말한다      (화자 강조 + 녹음, 자막 없음)
+#   caption 말이 끝난다  (전사된 문장이 자막 바에 오르고 상태 바가 "분석 중"이 된다)
+#   apply   판단이 뜬다  (벽면이 바뀐다)
+# 세 박자로 쪼개야 "발언 -> 인식 -> 표출"의 인과가 관객 눈에 순서대로 보인다.
 BEAT_SECONDS = {
-    "card": 3.0,      # 시나리오 타이틀 카드
-    "speak": 4.0,     # 자막 + 녹음 재생 — 녹음이 있으면 아래에서 그 길이로 늘린다
-    "apply": 3.2,     # 바뀐 벽면 감상
-    "ending": 4.6,    # 시나리오 마지막 화면은 조금 더 길게
+    "voice": 2.0,     # 녹음이 없을 때만 쓰는 값 — 있으면 녹음 길이를 따른다
+    "caption": 2.0,   # 자막을 읽는 시간
+    "apply": 3.0,     # 바뀐 벽면 감상
+    "ending": 4.6,    # 시나리오가 바뀌기 전 한 박자 쉼
 }
 
-# 녹음이 끝난 뒤 자막을 조금 더 두고 다음 발언으로 넘어간다. 0이면 말이 끝나자마자
-# 화면이 바뀌어 급하게 읽힌다.
-SPEAK_TAIL = 0.8
+# 녹음 끝과 자막 사이의 여유. 0이면 마지막 음절이 남아 있는데 자막이 올라온다.
+VOICE_GRACE = 0.25
 
 
-def speak_hold(scenario_id: str, index: int) -> float:
-    """발언 박자를 얼마나 둘지. 녹음 길이보다 짧으면 다음 발언이 그 위에 겹쳐 재생된다.
+def voice_hold(scenario_id: str, index: int) -> float:
+    """말하는 박자를 얼마나 둘지 — 그 녹음 길이만큼이다.
 
-    녹음은 4~9초로 길이가 제각각이라 고정 초로는 맞출 수 없다.
+    녹음은 4~9초로 제각각이라 고정 초로는 맞출 수 없다. 짧게 잡으면 말이 끝나기 전에
+    자막과 다음 발언이 밀고 들어온다.
     """
     seconds = dsc.audio_seconds(scenario_id, index)
     if seconds is None:
-        return BEAT_SECONDS["speak"]
-    return max(BEAT_SECONDS["speak"], seconds + SPEAK_TAIL)
+        return BEAT_SECONDS["voice"]
+    return seconds + VOICE_GRACE
 
 
 def start_film(playlist: list[str]) -> None:
-    """연속 재생 시작. 첫 박자는 타이틀 카드다.
+    """연속 재생 시작. 첫 시나리오의 첫 발언부터 곧바로 시작한다.
 
     상황을 비우는 것은 여기 한 번뿐이다. 시나리오와 시나리오 사이에서는 비우지 않는다.
     """
@@ -282,7 +296,9 @@ def start_film(playlist: list[str]) -> None:
     st.session_state.film_event_map = {}
     st.session_state.film_playlist = playlist
     st.session_state.film_pos = 0
-    st.session_state.film_phase = "card"
+    st.session_state.scenario_id = playlist[0]
+    st.session_state.play_index = 0
+    st.session_state.film_phase = "voice"
     st.session_state.film_hold = 0.0
     st.session_state.stage_auto = True
 
@@ -295,33 +311,34 @@ def advance_film() -> None:
     turns = dsc.script(scenario_id)
     use_baked = ss.get("stage_use_baked", False)
 
-    if ss.film_phase == "card":
-        # 여기서 상황을 지우지 않는다. 앞 사태를 남겨 둬야 두 사태가 동시에 진행되는
-        # 모습(작전상황판 2행, 벽면이 두 상황을 나눠 표출)이 나온다 — 이 체계가 원래
-        # 보여주려는 것이고, 지우면 그냥 시나리오 두 개를 따로 튼 것이 된다.
-        ss.scenario_id = scenario_id
-        ss.play_index = 0
-        ss.film_card = dsc.name_of(scenario_id)
-        ss.film_phase = "speak"
-        ss.film_hold = BEAT_SECONDS["card"]
+    if ss.film_phase == "voice":
+        speak_turn(scenario_id, ss.play_index)
+        ss.film_phase = "caption"
+        ss.film_hold = voice_hold(scenario_id, ss.play_index)
         return
 
-    if ss.film_phase == "speak":
-        ss.film_card = ""
-        speak_turn(scenario_id, ss.play_index)
+    if ss.film_phase == "caption":
+        caption_turn(scenario_id, ss.play_index)
         ss.film_phase = "apply"
-        ss.film_hold = speak_hold(scenario_id, ss.play_index)
+        ss.film_hold = BEAT_SECONDS["caption"]
         return
 
     # "apply" — 여기서 벽면이 바뀐다
     apply_verdict(scenario_id, ss.play_index, use_baked)
     ss.play_index += 1
     if ss.play_index < len(turns):
-        ss.film_phase = "speak"
+        ss.film_phase = "voice"
         ss.film_hold = BEAT_SECONDS["apply"]
     elif ss.film_pos + 1 < len(playlist):
+        # 다음 시나리오로 넘어가되 상황은 비우지 않는다. 앞 사태를 남겨 둬야 두 사태가
+        # 동시에 진행되는 모습(작전상황판 2행, 벽면이 두 상황을 나눠 표출)이 나온다 —
+        # 이 체계가 원래 보여주려는 것이고, 지우면 시나리오 두 개를 따로 튼 것이 된다.
+        # 경계를 알리는 안내 화면은 두지 않는다. 관객에게는 새 사태가 하나 더 터진
+        # 것으로 보여야 하고, "SCENARIO 2/2" 같은 카드는 짜 둔 대본임을 광고할 뿐이다.
         ss.film_pos += 1
-        ss.film_phase = "card"
+        ss.scenario_id = playlist[ss.film_pos]
+        ss.play_index = 0
+        ss.film_phase = "voice"
         ss.film_hold = BEAT_SECONDS["ending"]
     else:
         ss.stage_auto = False
@@ -535,29 +552,19 @@ STAGE_HEIGHT = "31vh"
 # 두 칸 모두 같은 높이의 구역 제목을 달아야 카드 위끝·아래끝이 나란히 맞는다.
 BODY_HEIGHT = f"calc({STAGE_HEIGHT} - 21px)"
 
-film_card = st.session_state.get("film_card") or ""
-if film_card:
-    playlist = st.session_state.film_playlist or [st.session_state.scenario_id]
+stage = st.columns([3, 2])
+with stage[0]:
     st.markdown(
-        ds.interlude_html(
-            film_card, st.session_state.film_pos + 1, len(playlist), height=STAGE_HEIGHT
-        ),
+        ds.section_label("전투지휘소", f"{len(dr.occupants(dr.cp_room()['id']))}명 착석")
+        + ds.cp_html(cur_speaker, height=BODY_HEIGHT),
         unsafe_allow_html=True,
     )
-else:
-    stage = st.columns([3, 2])
-    with stage[0]:
-        st.markdown(
-            ds.section_label("전투지휘소", f"{len(dr.occupants(dr.cp_room()['id']))}명 착석")
-            + ds.cp_html(cur_speaker, height=BODY_HEIGHT),
-            unsafe_allow_html=True,
-        )
-    with stage[1]:
-        st.markdown(
-            ds.section_label("상황실", f"{len(dr.situation_rooms())}개소")
-            + ds.rooms_grid_html(cur_speaker, height=BODY_HEIGHT),
-            unsafe_allow_html=True,
-        )
+with stage[1]:
+    st.markdown(
+        ds.section_label("상황실", f"{len(dr.situation_rooms())}개소")
+        + ds.rooms_grid_html(cur_speaker, height=BODY_HEIGHT),
+        unsafe_allow_html=True,
+    )
 
 st.markdown(
     ds.subtitle_html(cur_speaker, cur_text, st.session_state.stage_voice),

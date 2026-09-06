@@ -314,28 +314,15 @@ def header_html(
     )
 
 
-def interlude_html(name: str, index: int, total: int, height: str = "auto") -> str:
-    """시나리오와 시나리오 사이의 타이틀 카드.
-
-    앞 상황을 지우고 다음 상황으로 넘어가는 순간을 관객이 알아채야, 두 시나리오가
-    한 편으로 이어져 보인다. 이 카드가 없으면 화면이 갑자기 리셋된 것처럼 보인다.
-    """
-    return (
-        f'<div class="vc-card" style="height:{height}; display:flex; '
-        'flex-direction:column; align-items:center; justify-content:center; gap:10px; '
-        'box-sizing:border-box;">'
-        f'<div style="font-size:0.6rem; letter-spacing:3px; color:{C["muted"]};">'
-        f"SCENARIO {index} / {total}</div>"
-        f'<div style="font-size:1.5rem; font-weight:800; letter-spacing:1px; '
-        f'color:{C["accent_bright"]};">{_esc(name)}</div>'
-        f'<div style="width:64px; height:2px; background:{C["accent"]};"></div>'
-        "</div>"
-    )
-
-
 def subtitle_html(speaker: str | None, text: str | None, via_voice: bool = False) -> str:
-    """하단 자막 바. 지금 발언 전문을 크게 보여준다 — 발언 내용이 나오는 유일한 자리다."""
-    if not speaker or not text:
+    """하단 자막 바. 지금 발언 전문을 크게 보여준다 — 발언 내용이 나오는 유일한 자리다.
+
+    화자만 있고 발언이 없으면 "말하는 중"이다. 연속 재생에서 녹음이 흐르는 동안이
+    그 상태이고, 말이 끝나야 전사된 문장이 이 자리에 올라온다 — 실제 체계가 발언
+    종료 후에 전사하는 순서와 같다. 그 사이 바를 비워 두면 사람은 말하는데 화면
+    아래는 "발언 대기 중"이라고 적혀 있게 된다.
+    """
+    if not speaker:
         return (
             f'<div class="vc-card" style="margin-top:{_SUBTITLE_GAP}; padding:11px 14px; '
             f'font-size:0.72rem; letter-spacing:1px; color:{C["muted"]};">발언 대기 중…</div>'
@@ -366,9 +353,16 @@ def subtitle_html(speaker: str | None, text: str | None, via_voice: bool = False
         f'<span style="font-size:0.53rem; letter-spacing:0.5px; color:{C["muted"]}; '
         f'white-space:nowrap;">{_esc(rank)} · {_esc(room_name)}</span>'
         "</div>"
-        # 발언 전문
+        # 발언 전문 — 아직 말하는 중이면 그 자리에 수신 표시가 대신 들어간다
         '<div style="flex:1; display:flex; align-items:center; padding:9px 15px; '
         'min-width:0;">'
-        f'<span style="font-size:1rem; line-height:1.4; color:#EEF4FB;">{_esc(text)}</span>'
-        "</div></div>"
+        + (
+            f'<span style="font-size:1rem; line-height:1.4; color:#EEF4FB;">{_esc(text)}</span>'
+            if text
+            else (
+                f'<span style="font-size:0.78rem; letter-spacing:2px; color:{C["muted"]};">'
+                "● 음성 수신 중…</span>"
+            )
+        )
+        + "</div></div>"
     )

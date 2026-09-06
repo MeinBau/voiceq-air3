@@ -45,14 +45,9 @@ def _situation_board_body(situation_board: list[dict]) -> str:
             f'<div style="font-size:0.62rem; opacity:0.65;">{_esc(rank)}순위 '
             f'<span style="padding:1px 6px; border-radius:8px; background:{color}; '
             f'margin-left:4px;">{_esc(urgency)}</span></div>'
-            f'<div style="font-size:0.74rem; font-weight:700; margin-top:2px;">{event}</div>'
-            + (
-                f'<div style="font-size:0.62rem; opacity:0.6; margin-top:2px;">'
-                f"└ {_esc(item['latest'])}</div>"
-                if item.get("latest")
-                else ""
-            )
-            + "</div>"
+            f'<div style="font-size:0.74rem; font-weight:700; margin-top:2px; '
+            f'line-height:1.35;">{event}</div>'
+            "</div>"
         )
 
     return (

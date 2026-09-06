@@ -274,18 +274,17 @@ def _rebuild_situation_board() -> None:
             -pair[0],
         ),
     )
-    board = []
-    for rank, (_, event) in enumerate(ordered[:MAX_BOARD_ROWS], start=1):
-        entries = event.get("entries") or []
-        board.append(
-            {
-                "rank": rank,
-                "event": event.get("title", ""),
-                "urgency": event.get("urgency", DEFAULT_URGENCY),
-                # 사태의 가장 최근 진행 상황. 판을 보면 지금 어디까지 왔는지 읽힌다.
-                "latest": entries[-1].get("detail", "") if len(entries) > 1 else "",
-            }
-        )
+    # 조치 내역은 여기 넣지 않는다. 상황판은 "무슨 사태가 걸려 있나"를 한눈에 보는
+    # 판이고, 사태별 진행 경과는 작전상황일지가 타임라인으로 보여준다. 판에 조치까지
+    # 적으면 한 칸짜리 타일에서 뒤 순위의 사태 이름이 아래로 밀려 안 보인다.
+    board = [
+        {
+            "rank": rank,
+            "event": event.get("title", ""),
+            "urgency": event.get("urgency", DEFAULT_URGENCY),
+        }
+        for rank, (_, event) in enumerate(ordered[:MAX_BOARD_ROWS], start=1)
+    ]
     st.session_state.situation_board = board
 
 

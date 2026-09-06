@@ -172,6 +172,12 @@ utterance = "무인기 2대 식별"
 check(utterance not in cp_on and utterance not in rooms_on, "무대에 발언 내용이 새어 나온다")
 check(utterance in ds.subtitle_html(speaking, utterance), "자막 바에 발언이 없다")
 
+# 말하는 중(녹음이 흐르는 박자) — 화자는 나오고 발언은 아직 안 나온다
+talking = ds.subtitle_html(speaking, None)
+check(speaking in talking, "말하는 중인데 자막 바에 화자가 없다")
+check("수신 중" in talking, "말하는 중 표시가 없다")
+check("발언 대기 중" not in talking, "말하는 중인데 대기 상태로 보인다")
+
 # 페이지 전체가 unsafe_allow_html으로 그려지므로, 사람이 넣은 문자열은 반드시 이스케이프
 danger = '<script>alert(1)</script>'
 rendered = [
