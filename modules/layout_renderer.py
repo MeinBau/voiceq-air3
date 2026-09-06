@@ -59,8 +59,15 @@ def render_cop_wall(
     cop_layout: list[dict],
     situation_board: list[dict] | None = None,
     map_markers: list[dict] | None = None,
+    cols: int = pb.GRID_COLS,
+    rows: int = pb.GRID_ROWS,
+    show_title: bool = True,
+    min_row_height: str = "150px",
 ) -> None:
-    """2행 6열 Video Wall. 1순위는 좌측 2×2 대형 화면을 차지한다.
+    """Video Wall 그리드. 1순위는 좌측 대형 화면을 차지한다.
+
+    격자 크기는 인자로 받는다 — 본 앱은 2행 6열, 시연 페이지는 2행 4열을 쓴다.
+    좌표(item["grid"])는 playbook.tiling_for가 같은 열 수로 계산해 둔 값이어야 한다.
 
     전장 상황도는 별도 탭이 아니라 이 안에서 실제 SVG로 인라인 표출하며, 상황과
     무관하게 항상 1순위 자리에 고정된다. 지도 위에는 지금 화면에 떠 있는 CCTV의
@@ -70,22 +77,23 @@ def render_cop_wall(
     안에는 회색 플레이스홀더 대신 situation_board(우선순위 판단 목록)를
     "N순위" 카드로 직접 그려 넣는다.
     """
-    st.subheader("COP 화면 구성 — Video Wall 2×6")
+    if show_title:
+        st.subheader(f"COP 화면 구성 — Video Wall {rows}×{cols}")
 
     if not cop_layout:
         st.info("아직 화면 구성이 결정되지 않았습니다. 발언을 입력하면 자동으로 배치됩니다.")
         return
 
     panels = []
-    for item in cop_layout[: pb.MAX_PANELS]:
+    for item in cop_layout[: rows * cols]:
         row, col, rspan, cspan = item.get("grid", (1, 1, 1, 1))
         panels.append(
             _panel_html(item, row, col, rspan, cspan, cop_layout, situation_board, map_markers)
         )
 
     st.markdown(
-        f'<div style="display:grid; grid-template-columns:repeat({pb.GRID_COLS}, 1fr); '
-        f'grid-template-rows:repeat({pb.GRID_ROWS}, minmax(150px, auto)); gap:8px; '
+        f'<div style="display:grid; grid-template-columns:repeat({cols}, 1fr); '
+        f'grid-template-rows:repeat({rows}, minmax({min_row_height}, auto)); gap:8px; '
         f'background:#05080B; padding:10px; border-radius:8px; '
         f'border:1px solid rgba(255,255,255,0.08);">' + "".join(panels) + "</div>",
         unsafe_allow_html=True,

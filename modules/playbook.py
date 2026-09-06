@@ -26,6 +26,9 @@ PLAYBOOK_PATH = Path(__file__).resolve().parent.parent / "data" / "cop_playbook.
 GRID_ROWS, GRID_COLS = 2, 6
 MAX_PANELS = GRID_ROWS * GRID_COLS
 
+# 시연용 페이지는 같은 판단을 2행 4열 벽면에 올린다. 열 수만 다르고 행 수는 같다.
+DEMO_GRID_COLS = 4
+
 # FAST가 "이번 발언은 상황을 바꾸지 않는다"고 말할 때 쓰는 값. 플레이북의 상황 유형이
 # 아니라 신호이며, 잡담·질문·화면 배치 지시처럼 문장 자체에 상황 단서가 없는 발언에 쓴다.
 # 앱(context_memory)·데이터 생성(gen_dataset)·평가(evaluate)가 모두 이 상수를 쓴다 —
@@ -62,7 +65,7 @@ def _distribute(total: int, weights: list[float]) -> list[int]:
 #   표출용 보충 화면)가 2칸인데 2~5순위(그 상황에 실제로 필요한 화면)는 1칸이었다.
 #   중요도·긴급도에 따라 크기를 정한다는 전제가 거기서 무너진다. 배치 경우의 수가
 #   12가지뿐이므로 계산으로 맞추기보다 표로 고정하는 편이 검증도 쉽다.
-_TILINGS: dict[int, list[tuple[int, int, int, int]]] = {
+_TILINGS_2x6: dict[int, list[tuple[int, int, int, int]]] = {
     1: [(1, 1, 2, 6)],
     2: [(1, 1, 2, 4), (1, 5, 2, 2)],
     3: [(1, 1, 2, 3), (1, 4, 2, 2), (1, 6, 2, 1)],
@@ -78,7 +81,26 @@ _TILINGS: dict[int, list[tuple[int, int, int, int]]] = {
 }
 
 
-def tiling_for(n: int) -> list[tuple[int, int, int, int]]:
+# 2행 4열(시연 페이지) 배치표. 2×6과 같은 불변식으로 손으로 맞췄다 — 8칸을 빈틈
+# 없이 덮고, 면적이 우선순위를 따라 절대 역전하지 않는다. 8개까지가 전부이므로
+# 2×6과 달리 계산 폴백이 필요 없다.
+_TILINGS_2x4: dict[int, list[tuple[int, int, int, int]]] = {
+    1: [(1, 1, 2, 4)],
+    2: [(1, 1, 2, 2), (1, 3, 2, 2)],
+    3: [(1, 1, 2, 2), (1, 3, 1, 2), (2, 3, 1, 2)],
+    4: [(1, 1, 2, 2), (1, 3, 1, 2), (2, 3, 1, 1), (2, 4, 1, 1)],
+    5: [(1, 1, 2, 2), (1, 3, 1, 1), (1, 4, 1, 1), (2, 3, 1, 1), (2, 4, 1, 1)],
+    6: [(1, 1, 1, 2), (2, 1, 1, 2),
+        (1, 3, 1, 1), (1, 4, 1, 1), (2, 3, 1, 1), (2, 4, 1, 1)],
+    7: [(1, 1, 1, 2), (1, 3, 1, 1), (1, 4, 1, 1),
+        (2, 1, 1, 1), (2, 2, 1, 1), (2, 3, 1, 1), (2, 4, 1, 1)],
+    8: [(1, c, 1, 1) for c in range(1, 5)] + [(2, c, 1, 1) for c in range(1, 5)],
+}
+
+_TILINGS_BY_COLS = {GRID_COLS: _TILINGS_2x6, DEMO_GRID_COLS: _TILINGS_2x4}
+
+
+def tiling_for(n: int, cols: int = GRID_COLS) -> list[tuple[int, int, int, int]]:
     """패널 n개를 2행 6열에 빈틈없이 배치한다.
 
     개수에 따라 자리를 다시 잡으므로 화면이 2개든 9개든 벽에 빈칸이 남지 않는다.
@@ -87,22 +109,40 @@ def tiling_for(n: int) -> list[tuple[int, int, int, int]]:
     """
     if n <= 0:
         return []
-    n = min(n, MAX_PANELS)
-    if n in _TILINGS:
-        return list(_TILINGS[n])
+    table = _TILINGS_BY_COLS.get(cols)
+    if table is None:
+        raise ValueError(f"배치표가 없는 열 수입니다: {cols}")
+    n = min(n, GRID_ROWS * cols)
+    if n in table:
+        return list(table[n])
 
     # 10개 이상은 12칸에 한 칸짜리가 대부분이라 크기로 중요도를 드러낼 수 없다.
     # 아랫줄은 여섯 칸을 하나씩 채우고, 남는 열은 윗줄 상위 화면에 몰아줘
     # 최소한 하위 화면이 상위보다 커지는 역전만은 막는다.
-    top_n = n - GRID_COLS
+    top_n = n - cols
     weights = [1.0 / (i + 1) ** 0.7 for i in range(top_n)]
     slots: list[tuple[int, int, int, int]] = []
     col = 1
-    for w in _distribute(GRID_COLS, weights):
+    for w in _distribute(cols, weights):
         slots.append((1, col, 1, w))
         col += w
-    slots.extend((2, c, 1, 1) for c in range(1, GRID_COLS + 1))
+    slots.extend((2, c, 1, 1) for c in range(1, cols + 1))
     return slots
+
+
+def retile(layout: list[dict], cols: int = DEMO_GRID_COLS) -> list[dict]:
+    """이미 만들어진 레이아웃의 격자 좌표만 다른 벽면 크기에 맞춰 다시 계산한다.
+
+    시연 페이지가 본 앱과 똑같은 플레이북 판단을 2행 4열 벽면에 올리기 위한 것이다.
+    "무엇을 띄울지"(화면 선택)는 건드리지 않고 "어디에 띄울지"(배치)만 바꾼다 —
+    선택 로직을 복제하면 두 화면의 판단이 갈라지기 때문이다.
+    """
+    capped = layout[: GRID_ROWS * cols]
+    slots = tiling_for(len(capped), cols)
+    return [
+        {**item, "priority": i + 1, "grid": slot, "position": position_label(slot)}
+        for i, (item, slot) in enumerate(zip(capped, slots))
+    ]
 
 
 def layout_from_source_ids(source_ids: list) -> tuple[list[dict], list[str]]:
