@@ -333,7 +333,7 @@ if stt.is_configured():
             st.session_state.voice_pending = True
 
         audio_value = st.audio_input(
-            "발언 녹음 (정지하면 바로 처리)", key="voice_audio_input",
+            "발언 녹음", key="voice_audio_input",
             on_change=_mark_voice_pending,
         )
         if st.session_state.pop("voice_pending", False) and audio_value is not None:
