@@ -434,10 +434,15 @@ def build_layout_multi(
             }
         )
 
-    # 비행단 전장상황도는 상황 유형과 무관하게 항상 1순위(가장 큰 자리)로 고정 배치한다.
-    # 어떤 CCTV가 지금 화면에 떠 있는지 한눈에 보여주는 기준 화면이기 때문이다.
-    pinned_slot = load_playbook().get("pinned_slot", "")
-    if pinned_slot:
+    # 고정 화면은 상황 유형과 무관하게 앞자리에 먼저 깐다.
+    #  · 비행단 전장상황도 — 어떤 CCTV가 지금 화면에 떠 있는지 보여주는 기준 화면.
+    #  · 작전상황판 — 진행 중인 사태 목록. 예전에는 always_on(빈 자리 채우기)에 있어서,
+    #    사태가 둘 이상이면 상황별 화면이 자리를 다 채워 판이 벽면에서 밀려났다.
+    #    사태가 많을수록 더 필요한 화면이 사태가 많을 때 사라진 셈이라 고정으로 옮겼다.
+    # 문자열 하나만 적힌 예전 플레이북도 그대로 읽는다.
+    pinned = load_playbook().get("pinned_slot", "")
+    pinned_slots = [pinned] if isinstance(pinned, str) else list(pinned)
+    for pinned_slot in [x for x in pinned_slots if x]:
         for source in resolve_slot(pinned_slot, utterance, used):
             _append(source, pinned_slot, "고정")
 

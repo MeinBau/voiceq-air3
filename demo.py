@@ -61,6 +61,8 @@ st.session_state.setdefault("film_pos", 0)
 st.session_state.setdefault("film_phase", "speak")
 st.session_state.setdefault("film_hold", 0.0)
 st.session_state.setdefault("film_card", "")
+# 굽기의 사태 ID -> 지금 일지의 실제 ID. 시나리오를 이어 붙일 때 쓴다.
+st.session_state.setdefault("film_event_map", {})
 
 SPEAKERS = org.speaker_titles()
 
@@ -157,7 +159,7 @@ SITUATION_KEYS = (
 
 
 def reset_situation() -> None:
-    """상황 관련 상태만 비운다. 시나리오가 바뀔 때 앞 사태가 남아 있으면 안 된다."""
+    """상황 관련 상태만 비운다. 연속 재생을 처음부터 다시 시작할 때만 부른다."""
     for key in SITUATION_KEYS:
         st.session_state.pop(key, None)
     cm.init_session_state()
@@ -176,18 +178,50 @@ def speak_turn(scenario_id: str, index: int) -> None:
     st.session_state.stage_audio = str(audio) if audio else ""
 
 
+def _remap_event_id(full: dict | None, scenario_id: str) -> dict | None:
+    """구운 결과의 사태 ID를 지금 일지에 실제로 발급된 ID로 바꾼다.
+
+    두 시나리오를 이어서 재생하면 둘 다 "사태1"을 쓴다. 그대로 두면 두 번째 상황의
+    후속 조치가 첫 번째 사태 밑에 붙어 버린다(일지가 ID로 사태를 찾기 때문이다).
+    시나리오별로 "구운 ID -> 실제 ID" 표를 들고 다니며 갈아 끼운다.
+    """
+    if not full:
+        return full
+    entry = full.get("operation_log_entry") or {}
+    baked_id = str(entry.get("event_id", "") or "")
+    actual = st.session_state.film_event_map.get(f"{scenario_id}:{baked_id}")
+    if not baked_id or not actual or actual == baked_id:
+        return full
+    remapped = dict(full)
+    remapped["operation_log_entry"] = {**entry, "event_id": actual}
+    return remapped
+
+
+def _record_event_mapping(full: dict | None, scenario_id: str) -> None:
+    """새 사태가 만들어졌으면 구운 ID와 실제 ID를 짝지어 둔다."""
+    entry = (full or {}).get("operation_log_entry") or {}
+    if str(entry.get("kind", "")).strip() != "상황":
+        return
+    baked_id = str(entry.get("event_id", "") or "")
+    log = st.session_state.operation_log
+    if baked_id and log:
+        st.session_state.film_event_map[f"{scenario_id}:{baked_id}"] = log[-1]["event_id"]
+
+
 def apply_verdict(scenario_id: str, index: int, use_baked: bool) -> None:
     """판단을 화면에 올리는 박자 — 여기서 벽면이 바뀐다."""
     turn = dsc.script(scenario_id)[index]
     if use_baked:
         baked_turn = (dsc.load_baked(scenario_id) or {})["turns"][index]
+        full = baked_turn.get("full")
         apply_turn(
             baked_turn["speaker"],
             baked_turn["utterance"],
             baked_turn.get("fast"),
-            baked_turn.get("full"),
+            _remap_event_id(full, scenario_id),
             baked_turn.get("display_latency"),
         )
+        _record_event_mapping(full, scenario_id)
     else:
         run_turn(turn["speaker"], turn["utterance"])
 
@@ -225,7 +259,12 @@ BEAT_SECONDS = {
 
 
 def start_film(playlist: list[str]) -> None:
-    """연속 재생 시작. 첫 박자는 타이틀 카드다."""
+    """연속 재생 시작. 첫 박자는 타이틀 카드다.
+
+    상황을 비우는 것은 여기 한 번뿐이다. 시나리오와 시나리오 사이에서는 비우지 않는다.
+    """
+    reset_situation()
+    st.session_state.film_event_map = {}
     st.session_state.film_playlist = playlist
     st.session_state.film_pos = 0
     st.session_state.film_phase = "card"
@@ -242,8 +281,10 @@ def advance_film() -> None:
     use_baked = ss.get("stage_use_baked", False)
 
     if ss.film_phase == "card":
+        # 여기서 상황을 지우지 않는다. 앞 사태를 남겨 둬야 두 사태가 동시에 진행되는
+        # 모습(작전상황판 2행, 벽면이 두 상황을 나눠 표출)이 나온다 — 이 체계가 원래
+        # 보여주려는 것이고, 지우면 그냥 시나리오 두 개를 따로 튼 것이 된다.
         ss.scenario_id = scenario_id
-        reset_situation()
         ss.play_index = 0
         ss.film_card = dsc.name_of(scenario_id)
         ss.film_phase = "speak"
@@ -437,10 +478,12 @@ cur_speaker = st.session_state.stage_speaker or None
 cur_text = st.session_state.stage_text or None
 
 latencies = st.session_state.display_latency_history
-# 8칸에 6패널을 넣으면 1순위가 2×2(4칸)를 못 받는다(4+5>8). 그러면 항상 1순위로
-# 고정되는 전장상황도가 1행짜리 납작한 타일이 되어 격자 한 줄만 보인다. 벽면이
-# 좁아진 만큼 화면 수를 줄여, 지도가 제 크기를 갖고 나머지도 안 잘리게 한다.
-WALL_PANEL_CAP = 5
+# 사태가 둘이면 6칸이 필요하다 — 고정 2개(전장상황도·작전상황판)에 상황별 화면이
+# 최소 둘씩은 들어와야 두 사태가 모두 벽면에 보인다. 5로 자르면 뒤 상황의 화면이
+# 통째로 밀려난다. 대신 8칸에 6패널이면 1순위가 2×2를 못 받아(4+5>8) 전장상황도가
+# 가로로 납작해지는데, 지도 SVG가 비율을 지키며 줄어들도록 해 뒀으므로 작아질 뿐
+# 잘리지는 않는다.
+WALL_PANEL_CAP = 6
 
 wall_layout = pb.retile(st.session_state.cop_layout[:WALL_PANEL_CAP], WALL_COLS)
 
