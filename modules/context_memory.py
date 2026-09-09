@@ -9,6 +9,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from modules import actions as acts
 from modules import llm_engine as engine
 from modules import map_icons as mi
 from modules import map_renderer as mr
@@ -40,6 +41,8 @@ def init_session_state() -> None:
         # 이번 화면을 누가 구성했는지("모델" | "플레이북")와, 모델이 지어내서 버린 화면 id.
         "layout_origin": "",
         "invented_sources": [],
+        # 직전 발언으로 수행된 조치들의 결과(actions.ActionResult).
+        "action_results": [],
         "voice_transcript": "",
         "provider": engine.configured_provider(),
         "selected_model": engine.default_model_for(engine.configured_provider()),
@@ -66,6 +69,13 @@ KEEP_SITUATION = pb.KEEP_SITUATION
 # 모델이 낸 배치를 쓰려면 최소 이만큼은 실제 카탈로그 화면이어야 한다. 이보다 적으면
 # 벽면 대부분이 비어 시연이 불가능하므로 플레이북으로 되돌린다.
 MIN_MODEL_PANELS = 3
+
+
+def _bus() -> acts.ActionBus:
+    """조치 실행 버스. 세션당 하나만 만들어 실행 주체의 상태를 유지한다."""
+    if "_action_bus" not in st.session_state:
+        st.session_state._action_bus = acts.build_default_bus()
+    return st.session_state._action_bus
 
 
 def apply_fast_result(result_data: dict, utterance: str = "") -> None:
@@ -135,6 +145,15 @@ def apply_fast_result(result_data: dict, utterance: str = "") -> None:
 
     if not layout:
         layout, unresolved = pb.build_layout_multi(actives, utterance)
+
+    # 확정된 배치를 곧바로 세션에 대입하지 않고 조치(Action)로 만들어 실행 주체에게
+    # 넘긴다. 지금은 화면 표시가 유일한 실행 주체라 결과가 같지만, 실패할 수 있는
+    # 물리 장비(Video Wall, PTZ)를 붙일 자리를 판단 코드 밖에 두기 위한 것이다.
+    # 자세한 배경은 modules/actions.py 참고.
+    results = _bus().dispatch(
+        acts.actions_for_layout(layout, reason, sources.by_id())
+    )
+    st.session_state.action_results = results
 
     st.session_state.active_situations = actives
     st.session_state.cop_layout = layout
