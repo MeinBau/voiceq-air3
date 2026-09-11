@@ -112,9 +112,25 @@ class ActionBus:
 # 조치 도출 — 판단 결과에서 "무엇을 해야 하는지"를 뽑아낸다
 # ---------------------------------------------------------------------
 
-# PTZ로 지향할 수 있는 피드 종류. 상황판·레이더 같은 시스템 화면은 카메라가 아니라
-# 지향 대상이 아니다(map_renderer.CAMERA_FEED_TYPES와 같은 구분).
-AIMABLE_FEED_TYPES = {"CCTV", "열상", "이동형"}
+# 원격으로 지향(pan/tilt)할 수 있는 자산인지 판별한다.
+#
+# "카메라인가"(map_renderer.CAMERA_FEED_TYPES)와는 다른 질문이라 따로 둔다. 카탈로그
+# 270건 중 카메라는 223건이지만, 그중 실제로 돌릴 수 있는 것은 훨씬 적다.
+#   · PTZ 태그가 붙은 CCTV 6건 — 옥상 광역 카메라, 설명에 "360도 회전"
+#   · 열상감시장비(TOD) 8건 — 방위를 지향하는 감시자산
+# 나머지 고정 CCTV 200건에 "지향하라"고 보내면 받을 수 없는 명령이 되고, 실장비를
+# 붙였을 때 전부 실패로 돌아온다. 처음에는 feed_type만 보고 223건을 전부 지향
+# 대상으로 잡았는데, 그건 고정 카메라에 회전 명령을 내리는 것과 같았다.
+#
+# 바디캠(초병 착용)·조준경(사수 조준)은 사람이 향하는 것이라 원격 지향 대상이 아니다.
+# 이동형(순찰차 탑재)도 제외한다 — 그건 카메라를 돌리는 게 아니라 차량을 이동시키는
+# 것이고, 사람이 판단할 별개의 조치다.
+AIMABLE_FEED_TYPES = {"열상"}
+PTZ_TAG = "PTZ"
+
+
+def is_aimable(source: dict) -> bool:
+    return source.get("feed_type") in AIMABLE_FEED_TYPES or PTZ_TAG in source.get("tags", [])
 
 
 def actions_for_layout(
@@ -139,7 +155,7 @@ def actions_for_layout(
 
     for item in layout:
         entry = catalog.get(item.get("source_id", ""))
-        if not entry or entry.get("feed_type") not in AIMABLE_FEED_TYPES:
+        if not entry or not is_aimable(entry):
             continue
         actions.append(
             Action(

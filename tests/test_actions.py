@@ -24,17 +24,35 @@ def layout(*source_ids):
 
 
 # ---- ① 배치 하나가 서로 다른 장비에 대한 여러 조치로 갈라지는가 ----
+# 돌릴 수 있는 자산에만 지향 조치가 붙어야 한다.
+#   TOD-N          열상감시장비  -> 지향 가능
+#   CCTV-ROOF-TWR  PTZ 태그     -> 지향 가능
+#   CCTV-RWY-01    고정 CCTV    -> 불가 (돌릴 수 없는 카메라에 회전 명령을 보내면 안 된다)
+#   SYS-BASEMAP    시스템 화면   -> 카메라가 아님
 acted = acts.actions_for_layout(
-    layout("SYS-BASEMAP", "TOD-N", "CCTV-RWY-01"), "무인기 식별", catalog
+    layout("SYS-BASEMAP", "TOD-N", "CCTV-ROOF-TWR", "CCTV-RWY-01"), "무인기 식별", catalog
 )
 kinds = [a.kind for a in acted]
 assert kinds.count(acts.WALL_LAYOUT) == 1, kinds
-# TOD-N(열상)과 CCTV-RWY-01(CCTV)은 지향 대상, SYS-BASEMAP(시스템 화면)은 아니다.
 assert kinds.count(acts.CAMERA_AIM) == 2, kinds
 aimed = {a.payload["source_id"] for a in acted if a.kind == acts.CAMERA_AIM}
-assert aimed == {"TOD-N", "CCTV-RWY-01"}, aimed
+assert aimed == {"TOD-N", "CCTV-ROOF-TWR"}, aimed
 assert all(a.reason for a in acted), "근거 없는 조치가 있으면 안 된다"
-print(f"[1] 화면 3개 -> 조치 {len(acted)}건 (벽면 1 + 카메라 지향 2) (통과)")
+print(f"[1] 화면 4개 -> 조치 {len(acted)}건 (벽면 1 + 지향 2, 고정 CCTV는 제외) (통과)")
+
+# ---- ①-b 고정 카메라만 있는 배치는 지향 조치를 만들지 않는가 ----
+fixed_only = acts.actions_for_layout(
+    layout("SYS-BASEMAP", "CCTV-RWY-01", "CCTV-PERI-N01"), "점검", catalog
+)
+assert [a.kind for a in fixed_only] == [acts.WALL_LAYOUT], [a.kind for a in fixed_only]
+print("[1-b] 고정 카메라뿐인 배치 -> 지향 조치 없음 (통과)")
+
+# ---- ①-c 사람이 향하는 자산(바디캠·조준경)은 지향 대상이 아닌가 ----
+human = acts.actions_for_layout(
+    layout("SYS-BASEMAP", "CAM-GP-01-BODY", "SCOPE-AAA-01"), "점검", catalog
+)
+assert [a.kind for a in human] == [acts.WALL_LAYOUT], [a.kind for a in human]
+print("[1-c] 바디캠·조준경 -> 지향 조치 없음 (통과)")
 
 # ---- ② 미연동이 '성공'으로 둔갑하지 않는가 ----
 bus = acts.build_default_bus()
@@ -44,7 +62,7 @@ aims = [r for r in results if r.action.kind == acts.CAMERA_AIM]
 assert wall.ok and not wall.skipped, "화면 표출은 실제로 되는 조치다"
 assert all((not r.ok) and r.skipped for r in aims), "PTZ는 미연동으로 남아야 한다"
 assert all("연동되지 않아" in r.detail for r in aims)
-print("[2] 화면=수행됨 / PTZ=미연동으로 구분 보고 (통과)")
+print(f"[2] 화면=수행됨 / 지향 {len(aims)}건=미연동으로 구분 보고 (통과)")
 
 # ---- ③ 아무도 지원하지 않는 조치가 조용히 사라지지 않는가 ----
 orphan = acts.Action(kind="탄약고문잠금", payload={}, reason="테스트")
@@ -73,7 +91,7 @@ bus2 = acts.ActionBus([acts.WallActuator(), real, acts.PtzStubActuator()])
 results2 = bus2.dispatch(acted)
 aims2 = [r for r in results2 if r.action.kind == acts.CAMERA_AIM]
 assert all(r.ok and not r.skipped for r in aims2), "실장비가 등록되면 실제로 수행돼야 한다"
-assert real.moved == ["TOD-N", "CCTV-RWY-01"], real.moved
+assert real.moved == ["TOD-N", "CCTV-ROOF-TWR"], real.moved
 print("[4] 실장비 구현체 등록 -> 스텁 대체, 판단 코드 수정 없음 (통과)")
 
 # ---- ⑤ 장비가 예외를 던져도 회의 진행을 막지 않는가 ----
