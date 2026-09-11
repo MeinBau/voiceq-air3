@@ -48,6 +48,11 @@ URGENCY_ORDER = {"긴급": 0, "주의": 1, "관찰": 2}
 IGNORE_REASON = "상황 판단·조치와 무관한 발언이므로 진행 중인 상황 유형을 유지"
 CONSTRAINT_REASON = "화면 배치에 대한 지시일 뿐 새로운 사태가 아니므로 상황 유형을 유지"
 
+# ARC가 정의된 상황에서 ARC를 쓸 비율. 1.0으로 두지 않는 이유는, 같은 상황 유형에 대해
+# 기존 followups 조합도 함께 남겨야 모델이 "이 유형은 항상 이 순서"라고 외워버리지
+# 않기 때문이다(실제 회의는 전사록과 다르게 흘러가는 경우가 더 많다).
+ARC_RATIO = 0.7
+
 # 발언 자체가 상황을 새로 알리거나 바꾸지 않을 때 FAST가 내는 값. 정의는 playbook에
 # 있고 앱·평가도 같은 상수를 쓴다 — 문자열을 복제하면 조용히 어긋난다.
 KEEP_SITUATION = pb.KEEP_SITUATION
@@ -74,6 +79,9 @@ def make_context(rng: random.Random, situation_name: str) -> dict:
         "dist": rng.choice([40, 60, 80, 120, 800, 1200, 1500]),
         "km": rng.choice(["0.8", "1.5", "2.0", "3.0"]),
         "ms": rng.choice([2, 3, 5, 7]),
+        # ARC(실제 전사록 기반 시나리오) 전용 값.
+        "squad": rng.choice(bank.SQUADS),
+        "post": rng.choice(bank.SENTRY_POSTS),
     }
 
 
@@ -239,7 +247,8 @@ def emit_turn(state: ScenarioState, rng: random.Random, speaker: str, utterance:
     }
 
 
-def build_scenario(rng: random.Random, primary_situation: str) -> list[dict]:
+def build_scenario(rng: random.Random, primary_situation: str,
+                   force_arc: bool = False) -> list[dict]:
     state = ScenarioState()
     turns: list[dict] = []
 
@@ -252,6 +261,20 @@ def build_scenario(rng: random.Random, primary_situation: str) -> list[dict]:
     for event_index, situation_name in enumerate(events):
         spec = bank.SITUATIONS[situation_name]
         ctx = make_context(rng, situation_name)
+
+        # ARC를 쓸지 먼저 정한다. 개시 발언과 후속 조치가 같은 ctx(대상 수 등)를
+        # 공유해야 하므로, 개시를 만들기 전에 n을 확정해야 하기 때문이다.
+        arc = bank.ARCS.get(situation_name)
+        # force_arc는 전사록 기반 시나리오를 의도한 개수만큼 확보하려고 쓴다. 다만
+        # 주 사태에만 적용한다 — 두 번째로 끼어드는 사태까지 매번 전사록대로 흘러가면
+        # "사태가 겹치면 항상 이 순서"라는 잘못된 규칙을 배우게 된다.
+        use_arc = bool(arc) and (
+            (force_arc and event_index == 0) or rng.random() < ARC_RATIO
+        )
+        if use_arc:
+            if ctx["n"] < 2:
+                ctx["n"] = rng.randint(2, 5)
+            ctx["nrest"] = ctx["n"] - 1
 
         # --- 사태 개시 (kind="상황") ---
         tpl = rng.choice(spec["openers"])
@@ -274,7 +297,19 @@ def build_scenario(rng: random.Random, primary_situation: str) -> list[dict]:
         turns.append(turn)
 
         # --- 후속 조치 ---
-        followups = rng.sample(spec["followups"], k=min(len(spec["followups"]), rng.randint(2, 4)))
+        # ARC가 있으면 그 순서를 지킨다. 실제 전사록에서 가져온 사태는 인과가 있어서
+        # ("출동" -> "신병 확보" -> "인계완료") 무작위로 뽑으면 말이 안 되는 회의록이
+        # 되고, 모델이 사태의 진행 단계를 배우지 못한다. optional 단계만 건너뛴다.
+        if use_arc:
+            followups = []
+            for stage in arc:
+                if stage.get("optional") and rng.random() < 0.35:
+                    continue
+                followups.append(rng.choice(stage["variants"]))
+        else:
+            followups = rng.sample(
+                spec["followups"], k=min(len(spec["followups"]), rng.randint(2, 4))
+            )
         for tpl in followups:
             # 잡담(kind="무시") — 상황 유형도 일지도 건드리면 안 되는 턴.
             if rng.random() < 0.18:
@@ -414,6 +449,10 @@ def main() -> None:
                          "포함한다. 기획서 원안대로 모델이 화면 구성까지 내는 구조를 "
                          "파인튜닝으로 재현할 수 있는지 측정하기 위한 변형이며, "
                          "앱 실행 경로는 이 옵션과 무관하게 플레이북을 계속 쓴다.")
+    ap.add_argument("--arc-scenarios", type=int, default=100,
+                    help="실제 전사록 기반 시나리오(ARC)를 추가로 만들 개수. "
+                         "라운드로빈 배정만으로는 전사록 유형이 전체의 2/11에 그쳐 "
+                         "학습량이 부족하다. 0을 주면 추가 생성하지 않는다.")
     ap.add_argument("--out", type=Path, default=OUT_DIR)
     args = ap.parse_args()
 
@@ -425,6 +464,13 @@ def main() -> None:
         # 라운드로빈으로 주 상황을 돌려 11개 유형이 고르게 학습되도록 한다.
         primary = situation_names[i % len(situation_names)]
         by_situation[primary].append(build_scenario(rng, primary))
+
+    # 전사록 기반 시나리오 추가분. 위 라운드로빈에도 이 유형들이 섞여 있으므로 여기서
+    # 만든 것과 합쳐져 계층화 분할을 그대로 탄다.
+    arc_names = [n for n in bank.ARCS if n in by_situation]
+    for i in range(args.arc_scenarios):
+        primary = arc_names[i % len(arc_names)]
+        by_situation[primary].append(build_scenario(rng, primary, force_arc=True))
 
     # 상황 유형별로 나눠 담는다(계층화). 그냥 섞어서 자르면 시연 핵심인 드론상황이
     # 평가 셋에서 통째로 빠지는 일이 생긴다 — 실제로 처음 생성 때 그랬다.
