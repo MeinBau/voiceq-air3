@@ -272,6 +272,7 @@ with st.sidebar:
             "map_markers", "_last_map_click", "voice_transcript",
             "active_situations", "situation_type", "situation_reason",
             "situation_unmatched", "layout_origin", "invented_sources",
+            "action_results", "_action_bus",
         ):
             st.session_state.pop(key, None)
         cm.init_session_state()
@@ -342,6 +343,33 @@ with tab_wall:
     lr.render_cop_wall(
         st.session_state.cop_layout, st.session_state.situation_board, st.session_state.map_markers
     )
+
+    # 판단 결과가 실제로 어떤 조치로 나갔고 각각 어떻게 됐는지. 화면만 보면 "됐다"만
+    # 보이지만, 실제 지휘소에서는 카메라 지향처럼 화면 밖에서 일어나는 조치가 함께
+    # 나가고 그중 일부는 실패한다. 그걸 드러내는 자리다(modules/actions.py).
+    results = st.session_state.action_results
+    if results:
+        done = sum(1 for r in results if r.ok)
+        pending = sum(1 for r in results if r.skipped)
+        failed = len(results) - done - pending
+        label = f"조치 실행 결과 — 수행 {done} · 미연동 {pending}"
+        if failed:
+            label += f" · 실패 {failed}"
+        with st.expander(label):
+            for r in results:
+                target = r.action.payload.get("name") or f"화면 {len(r.action.payload.get('panels', []))}개"
+                line = f"**{r.action.kind}** · {target} — {r.detail}"
+                if r.ok:
+                    st.success(line)
+                elif r.skipped:
+                    st.info(line)
+                else:
+                    st.error(line)
+            st.caption(
+                "'미연동'은 실패가 아니라 해당 장비가 아직 연결되지 않았다는 뜻입니다. "
+                "부대 장비를 붙이려면 modules/actions.py의 Actuator를 구현해 등록하면 되고, "
+                "판단 코드는 그대로 둡니다."
+            )
 
 with tab_book:
     st.subheader("COP 플레이북")
